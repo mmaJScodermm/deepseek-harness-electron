@@ -614,8 +614,13 @@ describe('boot', () => {
       await configOwned.fiber.dispose()
     }
     const harnessBaseUrl = pathToFileURL(join(harness, 'entry.mjs')).href
-    const ctx = await boot(NAME, hostOwnedPath, undefined, undefined, harnessBaseUrl)
+    const preparedPackageBases: Array<string | undefined> = []
+    const ctx = await boot(NAME, hostOwnedPath, undefined, (hostCtx) => {
+      preparedPackageBases.push(hostCtx.get('dshPackageBaseUrl'))
+    }, harnessBaseUrl)
     try {
+      expect(preparedPackageBases).toEqual([harnessBaseUrl])
+      expect(ctx.get('dshPackageBaseUrl')).toBe(harnessBaseUrl)
       expect(ctx.get('harnessPluginLoaded')).toBe(true)
       expect(ctx.get('shadowPluginLoaded')).toBeUndefined()
       expect(ctx.get('relativePluginLoaded')).toBe(true)

@@ -3,7 +3,7 @@ import { EventEmitter, once } from 'node:events'
 import { createServer, request as httpRequest } from 'node:http'
 import { PassThrough, Readable } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy/api'
@@ -252,7 +252,7 @@ describe('connection node half', () => {
 
     expect(() => connection.rpc.handle('/rpc', async () => ({ ok: true, value: null }), {
       authority: 'trusted-host',
-    })).toThrow(/duplicate route/)
+    })).toThrow(/already registered/)
     await remove()
     expect(routes.map(candidate => candidate.path)).toEqual([API_PATH])
     await fiber.dispose()
@@ -415,6 +415,48 @@ describe('connection node half', () => {
     expect(publicResponse.state.status).toBe(403)
     await removeLoopback()
     await remove()
+    await fiber.dispose()
+  })
+  it('dispatches logical RPC channels without mounting a WebServer', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    const connection = ctx.get('connection') as HostConnectionHandle
+    const calls: unknown[] = []
+    const remove = connection.rpc.handle('/rpc', async (endpoint, payload) => {
+      calls.push({ endpoint, payload })
+      return { ok: true, value: { accepted: true } }
+    }, { authority: 'loopback' })
+    const envelope: ClientRequest = {
+      type: 'client-request',
+      rpcId: RpcId('electron-logical'),
+      method: 'goals/create',
+      payload: { args: { agentId: 'agent-electron' } },
+    }
+    const response = await connection.fetch('/rpc', new Request('http://dsh.internal/rpc/goals/create', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(envelope),
+    }))
+    expect(await response.json()).toEqual({
+      type: 'server-response',
+      rpcId: 'electron-logical',
+      result: { ok: true, value: { accepted: true } },
+    })
+    expect(calls).toEqual([{
+      endpoint: 'goals/create',
+      payload: { args: { agentId: 'agent-electron' } },
+    }])
+    const fallback = vi.fn(async () => new Response('fallback', { status: 202 }))
+    const unclaimed = await connection.fetch(
+      API_PATH,
+      new Request('http://dsh.internal/api/session.list'),
+      fallback,
+    )
+    expect(unclaimed.status).toBe(202)
+    expect(fallback).toHaveBeenCalledOnce()
+    await remove()
+    expect((await connection.fetch('/rpc', new Request('http://dsh.internal/rpc/goals/create'))).status).toBe(404)
     await fiber.dispose()
   })
 })

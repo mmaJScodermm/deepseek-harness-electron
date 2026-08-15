@@ -12,8 +12,9 @@
  */
 
 import { writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { FiberState, type Context } from '@deepseek-ai/cordis'
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
@@ -180,6 +181,8 @@ export interface RunProfileOptions {
   patchFiles: readonly string[]
   /** The invocation's inner arguments, handed to the tree through `ctx.cmdlineArgs`. */
   args: readonly string[]
+  /** Installed-host base URL for bare plugin imports in a closed packaged runtime. */
+  bareModuleBaseUrl?: string
 }
 
 /**
@@ -196,6 +199,19 @@ function suppressShutdownError(ctx: Context, signal: AbortSignal, error: unknown
   if (signal.aborted) return
   if (ctx.fiber.state !== FiberState.ACTIVE || ctx.get('loader') === undefined) return
   throw error
+}
+
+/**
+ * Resolve a launcher-owned plugin before inserting it into the profile-owned
+ * Loader tree. Packaged surfaces cannot resolve a bare name from the writable
+ * profile directory, while ordinary CLI runs retain that project-local lookup.
+ * @param name - bare plugin package name.
+ * @param bareModuleBaseUrl - optional installed-host resolution base.
+ * @returns the original name or its installed absolute file URL.
+ */
+function resolveLauncherPlugin(name: string, bareModuleBaseUrl?: string): string {
+  if (bareModuleBaseUrl === undefined) return name
+  return pathToFileURL(createRequire(bareModuleBaseUrl).resolve(name)).href
 }
 
 /**
@@ -245,18 +261,24 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
   ])
   // Cloned for the same insert-aliasing reason as composeLive: the boot
   // application must not mutate the objects later reloads recompose from.
-  const ctx = await boot(NAME, rootConfig, structuredClone(allPatches(composed)), (hostCtx) => {
-    app.current = hostCtx
-    // Before any config-tree entry mounts, so plugins resolve all launch-time
-    // environment values from the same immutable provenance snapshot.
-    hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, options.environment)
-    // The command line and bounded exit request are launcher facts available
-    // to every app plugin that injects the argument snapshot.
-    provideCmdline(hostCtx, {
-      args: options.args,
-      exit: code => void shutdown.shutdown(code),
-    })
-  })
+  const ctx = await boot(
+    NAME,
+    rootConfig,
+    structuredClone(allPatches(composed)),
+    (hostCtx) => {
+      app.current = hostCtx
+      // Before any config-tree entry mounts, so plugins resolve all launch-time
+      // environment values from the same immutable provenance snapshot.
+      hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, options.environment)
+      // The command line and bounded exit request are launcher facts available
+      // to every app plugin that injects the argument snapshot.
+      provideCmdline(hostCtx, {
+        args: options.args,
+        exit: code => void shutdown.shutdown(code),
+      })
+    },
+    options.bareModuleBaseUrl,
+  )
   app.current = ctx
   // A surface can dispose the whole tree while boot or this post-boot watcher
   // setup is still in flight — a signal, or a fast one-shot's appExit. Loader
@@ -278,9 +300,14 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
       // bare custom profile may not mount either.
       if (ctx.get('hmr') === undefined) {
         if (ctx.get('timer') === undefined) {
-          await ctx.loader.create({ name: '@deepseek-ai/cordis-plugin-timer' })
+          await ctx.loader.create({
+            name: resolveLauncherPlugin('@deepseek-ai/cordis-plugin-timer', options.bareModuleBaseUrl),
+          })
         }
-        await ctx.loader.create({ name: '@deepseek-ai/cordis-plugin-hmr', config: { root: [] } })
+        await ctx.loader.create({
+          name: resolveLauncherPlugin('@deepseek-ai/cordis-plugin-hmr', options.bareModuleBaseUrl),
+          config: { root: [] },
+        })
       }
       await watchUserPatches(ctx, {
         binName: NAME,

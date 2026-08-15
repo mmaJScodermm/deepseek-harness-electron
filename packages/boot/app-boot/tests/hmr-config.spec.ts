@@ -32,6 +32,23 @@ async function eventually(test: () => boolean, message: string): Promise<void> {
 }
 
 describe('HMR exact config paths', () => {
+  it('starts without an argv entry script', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-hmr-no-entry-'))
+    const argv = process.argv.splice(0)
+    const executable = argv[0]
+    if (executable === undefined) throw new Error('test process has no executable argument')
+    process.argv.push(executable)
+    let ctx: Context | undefined
+    try {
+      ctx = await bootHmr(dir)
+      expect(ctx.get('hmr')).toBeDefined()
+    } finally {
+      await ctx?.fiber.dispose()
+      process.argv.splice(0, process.argv.length, ...argv)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('observes module changes when its watch base is a filesystem alias', { timeout: 30_000 }, async () => {
     const target = mkdtempSync(join(tmpdir(), 'dsh-hmr-module-canonical-'))
     const alias = `${target}-alias`

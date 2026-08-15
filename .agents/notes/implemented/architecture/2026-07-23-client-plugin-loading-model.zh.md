@@ -67,7 +67,7 @@ vendored Loader 经其 `internal` 约定消费模块系统——唯一调用点�
 **host 侧——组合这张图。**
 
 1. 负责组合的 app（`apps/cli`）把名册作为普通行放进它的 `cordis.yml` 配置树——client 插件包与每个 host 插件一样是 entry 行，包括无条件挂载的 `client-hmr` 行。名册行 import 失败由 `assertEntriesLoaded` 捕获；fiber reject 的行则由 `assertEntriesActivated` 报告原始 stack（[host boot 决策](2026-07-24-web-config-tree-boot-and-transport-layering.md)）。
-2. `dsh-client-modules` 的 node 半（该包是双面的：浏览器半就是模块表）扫描 loader entry 的 package.json `dsh.client` 声明，组合出 `window.__DSH_BOOT__`：`{ rev, entries: [{ id, url, rev, inject?, immediately? }] }`。`inject` 边与 `immediately` 标记都来自 manifest，永不人肉抄写。它会拒绝没有已构建 `./client` bundle 的已声明插件，并把它们的 package/path 行归到一条源码构建要求下；畸形声明字段同样会让激活失败，host 检查会从 FAILED fiber 报告这两类错误。
+2. `dsh-client-modules` 的 node 半（该包是双面的：浏览器半就是模块表）扫描 loader entry 的 package.json `dsh.client` 声明，组合出 `window.__DSH_BOOT__`：`{ rev, entries: [{ id, url, rev, inject?, immediately? }] }`。存在已安装宿主的 `ctx.dshPackageBaseUrl` 时，它从该处解析包元数据，否则从配置树的 `ctx.baseUrl` 解析，因此可写 profile 不会改写封闭运行时的 client 图。`inject` 边与 `immediately` 标记都来自 manifest，永不人肉抄写。它会拒绝没有已构建 `./client` bundle 的已声明插件，并把它们的 package/path 行归到一条源码构建要求下；畸形声明字段同样会让激活失败，host 检查会从 FAILED fiber 报告这两类错误。
 3. 扫描是单包增量——不存在全量重扫代码路径。每次 cordis `internal/plugin` 发射把该 fiber 的 entry 名标脏（无 entry 的 fiber O(1) 丢弃）；微任务 flush 把每个脏名对账 live loader entries，包元数据（含「非 client 包」的否定结论）按名永久缓存，bundle 重哈希只经 `rebuilt(id)` 可达。激活趟从当前 entries 灌同一脏集合并同步 flush，初扫与稳态共享一条实现。每个 bundle 的内容哈希是其 `rev`（缓存失效 + HMR diff 锚点），行集合哈希进 `graph.rev`，每一行都作为脚本资源供给：`/plugins/<id>/client.js?rev=…`，对应 sourcemap 位于同一路径加 `.map`。图类型单源在 modules 包的 `./client` 出口——webserver 对图一无所知（它是朴素路由注册插件；bundle 路由和 index 渲染 tap 都由 modules 自己注册）。
 
 为什么名册是 yml 行而不是扫描？因为哪些插件组合进一次部署是组合决策，不是包属性——一个在仓库中声明了 dsh.client 的包，不代表这次部署要挂载它，扫描发现无从替人做这个决定；node 半只扫描配置树实际挂载了的东西。
@@ -113,7 +113,7 @@ vendored Loader 经其 `internal` 约定消费模块系统——唯一调用点�
 | `dsh-client-ui-slots` | slot 注册表核心 | 普通包，已播种 | 升格为插件；接收 runtime 的 slots 机件 |
 | `dsh-client-web-react` | ctx↔React 胶水 | 普通包，已播种 | 升格为插件；渲染器安装移入其 apply |
 | `dsh-client-ui-primitives` | 基础组件 | 普通包，已播种 | 升格为插件（组件经 slot/服务供给） |
-| `dsh-client-connection` | wire 层 | 插件（dsh.client + bundle），声明 `immediately` | 传输替换（Electron IPC 载体） |
+| `dsh-client-connection` | wire 层 | 插件（dsh.client + bundle），提供 Web HTTP／WebSocket 与 Electron IPC 载体 | 其他载体仍局限在本包及对应应用桥接内 |
 | `dsh-client-runtime` | 会话对象层 + slots 服务 + store 引擎 | 插件，声明 `immediately` | 持续缩向纯会话对象层 |
 | `dsh-client-ui-theme` | 主题 token/服务 | 插件，声明 `immediately`，外加 `./styles/*` 源码通道 | Theme Registry（另行裁定） |
 | `dsh-client-i18n` | I18nService | 插件，声明 `immediately` | 按部署组合语言包 |

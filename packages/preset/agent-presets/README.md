@@ -62,7 +62,7 @@ The copied tree is re-tightened to owner-only (`0o600` files keeping their owner
 
 ### How a preset's rows resolve
 
-A row's **package name** resolves from the host composition, not from the preset directory. The Loader normally resolves an entry against its own tree's `baseUrl`, which for a preset is wherever the composition file sits; a locally authored preset lives under the user's home, where Node's upward `node_modules` walk never reaches the harness, so every `@deepseek-ai/dsh-*` row would fail to import. The mount records the host base before plugging the subtree and sends bare specifiers there.
+A row's **package name** resolves from the installed app, not from the preset directory. The Loader normally resolves an entry against its own tree's `baseUrl`, which for a preset is wherever the composition file sits; a locally authored preset lives under the user's home, where Node's upward `node_modules` walk never reaches the harness, so every `@deepseek-ai/dsh-*` row would fail to import. A closed packaged runtime publishes its installed package base as `ctx.dshPackageBaseUrl`, which the mount prefers over the host composition's `ctx.baseUrl`; source and external launchers that publish no installed base retain the host-composition fallback.
 
 A **relative** path still resolves from the preset's own directory, so a preset's own plugin files and skill directories travel with it.
 

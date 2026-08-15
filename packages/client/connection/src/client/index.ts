@@ -1,11 +1,14 @@
 /**
- * Browser wire client. The plugin selects fixture or HTTP transport, provides
+ * Web-technology wire client. The plugin selects fixture, Electron IPC, or Web transport, provides
  * the shared API client, and lets the runtime object layer start the stream
  * controller with its sinks.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { HostDescription, IApiClient } from './api.ts'
 import { ConnectionController, type ConnectionConfig, type ConnectionSinks, type ConnectionState } from './connection.ts'
+import { ElectronApiClient } from './electron-api-client.ts'
+import { currentElectronBridge } from './electron-bridge.ts'
+import { createElectronConnectionRpc } from './electron-rpc.ts'
 import { FixtureApiClient } from './fixture.ts'
 import { WebApiClient } from './web-api-client.ts'
 import { createWebConnectionRpc } from './rpc.ts'
@@ -40,6 +43,11 @@ export {
 // controller remains package-internal.
 export type { ConnectionConfig, ConnectionSinks, ConnectionState }
 export type { ClientConnectionRpc } from '../rpc.ts'
+export type {
+  ElectronBridge, ElectronBridgeRequest, ElectronBridgeResponse,
+  ElectronBridgeStreamKind, ElectronBridgeStreamMessage, ElectronBridgeStreamRequest,
+} from '../electron-wire.ts'
+export { ElectronApiClient } from './electron-api-client.ts'
 
 /** Observable Host description published by each completed connection handshake. */
 export interface HostDescriptionSource {
@@ -58,7 +66,7 @@ export const inject: string[] = []
  * is ready — connection stays consumer-agnostic).
  */
 export interface ConnectionHandle {
-  /** Shared api client (fixture or real, decided at boot from the page URL). */
+  /** Shared api client selected from fixture, Electron, or Web carriage at boot. */
   readonly api: IApiClient
   /** Whether the current page authority is loopback; non-browser contexts default to true. */
   readonly isLoopback: boolean
@@ -85,8 +93,13 @@ export function apply(ctx: Context): void {
   const pageLocation = typeof location === 'undefined' ? undefined : location
   const fixture = pageLocation !== undefined && new URLSearchParams(pageLocation.search).has('fixture')
   const fixtureClient = fixture ? new FixtureApiClient() : undefined
-  const api: IApiClient = fixtureClient ?? new WebApiClient()
-  const rpc = fixtureClient?.rpc ?? createWebConnectionRpc()
+  const electronBridge = fixtureClient === undefined ? currentElectronBridge() : undefined
+  const api: IApiClient = fixtureClient ?? (electronBridge === undefined
+    ? new WebApiClient()
+    : new ElectronApiClient(electronBridge))
+  const rpc = fixtureClient?.rpc ?? (electronBridge === undefined
+    ? createWebConnectionRpc()
+    : createElectronConnectionRpc(electronBridge))
   let started = false
   let description: HostDescription | undefined
   const descriptionListeners = new Set<() => void>()
@@ -103,7 +116,7 @@ export function apply(ctx: Context): void {
   }
   const handle: ConnectionHandle = {
     api,
-    isLoopback: pageLocation === undefined || isLoopbackHostname(pageLocation.hostname),
+    isLoopback: electronBridge !== undefined || pageLocation === undefined || isLoopbackHostname(pageLocation.hostname),
     hostDescription: {
       getSnapshot: () => description,
       subscribe: (listener) => {

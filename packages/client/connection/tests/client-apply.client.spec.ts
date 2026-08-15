@@ -8,10 +8,13 @@ import { apply, type ConnectionHandle } from '../src/client/index.ts'
 import type { RpcMessage } from '../src/client/api.ts'
 import { RpcId } from '../src/client/api.ts'
 import { FixtureApiClient } from '../src/client/fixture.ts'
+import { ElectronApiClient } from '../src/client/electron-api-client.ts'
 import { WebApiClient } from '../src/client/web-api-client.ts'
+import type { ElectronBridge } from '../src/electron-wire.ts'
 
 type Win = { location?: { hostname: string; search: string; origin?: string } }
 type WebSocketGlobal = { WebSocket?: typeof WebSocket }
+type ElectronGlobal = { __DSH_ELECTRON__?: ElectronBridge }
 
 const originalWebSocket = globalThis.WebSocket
 const sockets: FakeWebSocket[] = []
@@ -49,6 +52,7 @@ class FakeWebSocket extends EventTarget {
 
 afterEach(() => {
   delete (globalThis as Win).location
+  delete (globalThis as ElectronGlobal).__DSH_ELECTRON__
   sockets.length = 0
   if (originalWebSocket === undefined) delete (globalThis as WebSocketGlobal).WebSocket
   else globalThis.WebSocket = originalWebSocket
@@ -82,6 +86,19 @@ describe('connection client apply', () => {
   it('reports non-loopback page authority through the connection handle', async () => {
     ;(globalThis as Win).location = { hostname: '192.0.2.20', search: '' }
     expect((await mount()).isLoopback).toBe(false)
+  })
+
+  it('selects the Electron carrier before the Web carrier and treats it as local', async () => {
+    ;(globalThis as Win).location = { hostname: '', search: '', origin: 'null' }
+    ;(globalThis as ElectronGlobal).__DSH_ELECTRON__ = {
+      request: () => Promise.reject(new Error('unused')),
+      cancelRequest: () => undefined,
+      openStream: () => Promise.resolve(),
+      closeStream: () => undefined,
+    }
+    const handle = await mount()
+    expect(handle.api).toBeInstanceOf(ElectronApiClient)
+    expect(handle.isLoopback).toBe(true)
   })
 
   it('start() hands out one loop, rejects a second consumer, and stop() aborts the streams', async () => {

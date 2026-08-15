@@ -21,6 +21,9 @@ export type ConnectionRpcHandler = (
 /** Synchronous ownership test for one endpoint on a shared RPC channel. */
 export type ConnectionRpcEndpointMatcher = (endpoint: string) => boolean
 
+/** Fallback for a logical channel when no registered handler claims its endpoint. */
+export type ConnectionRpcFetchFallback = (request: Request) => Promise<Response>
+
 /** Host registry for logical RPC channels carried by the current transport. */
 export interface HostConnectionRpc {
   /**
@@ -56,6 +59,15 @@ export interface HostConnectionRpc {
 export interface HostConnectionHandle {
   /** Generic RPC channel registry. */
   readonly rpc: HostConnectionRpc
+  /**
+   * Dispatch one Fetch-shaped request through the logical channel registry.
+   * Applications use this when their physical carrier is not HTTP.
+   * @param channel - absolute logical channel such as `/api`.
+   * @param request - request whose pathname carries the channel-relative endpoint.
+   * @param fallback - optional handler for endpoints no registration claims.
+   * @returns the selected handler response, or 404 when no handler or fallback claims it.
+   */
+  fetch(channel: string, request: Request, fallback?: ConnectionRpcFetchFallback): Promise<Response>
 }
 
 /** Client caller for logical RPC channels carried by the current transport. */

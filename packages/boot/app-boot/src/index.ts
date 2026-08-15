@@ -25,6 +25,8 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Harness-home path resolver available to Loader `!!js` config expressions. */
     dshHomePath?: typeof dshHomePath
+    /** Installed-host base URL for Harness-owned bare package resolution. */
+    dshPackageBaseUrl?: string
   }
 }
 
@@ -489,6 +491,13 @@ export async function mountRootInclude(
   patches: readonly PatchOptions[] = [],
   bareModuleBaseUrl?: string,
 ): Promise<Entry | undefined> {
+  if (bareModuleBaseUrl !== undefined) {
+    const providedBaseUrl = ctx.get('dshPackageBaseUrl')
+    if (providedBaseUrl === undefined) ctx.provide('dshPackageBaseUrl', bareModuleBaseUrl)
+    else if (providedBaseUrl !== bareModuleBaseUrl) {
+      throw new Error('app-boot: bareModuleBaseUrl conflicts with the provided dshPackageBaseUrl')
+    }
+  }
   ctx.loader.builtins.include = bareModuleBaseUrl === undefined
     ? Include
     : class HostResolvedRootInclude extends Include {
@@ -768,6 +777,7 @@ export async function boot(
   try {
     ctx.baseUrl = pathToFileURL(dirname(absoluteConfigPath)).href + '/'
     ctx.provide('dshHomePath', dshHomePath)
+    if (bareModuleBaseUrl !== undefined) ctx.provide('dshPackageBaseUrl', bareModuleBaseUrl)
     await ctx.plugin(Loader)
     await prepare?.(ctx)
     stage = 'plugin tree failed to load'

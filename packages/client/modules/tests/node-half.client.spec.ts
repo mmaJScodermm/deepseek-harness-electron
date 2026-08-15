@@ -2,6 +2,7 @@
 
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -11,10 +12,13 @@ import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { ClientModuleRegistry } from '../src/index.ts'
 
 let root: string | undefined
+let profileRoot: string | undefined
 
 afterEach(() => {
   if (root !== undefined) rmSync(root, { recursive: true, force: true })
+  if (profileRoot !== undefined) rmSync(profileRoot, { recursive: true, force: true })
   root = undefined
+  profileRoot = undefined
 })
 
 /** Create a resolvable package whose client export points at the returned path. */
@@ -69,6 +73,40 @@ function construct(packageNames: string[]): ClientModuleRegistry {
 }
 
 describe('client bundle activation', () => {
+  it('composes the graph without an HTTP carrier', () => {
+    const packageName = '@fixture/electron-client'
+    const clientPath = writePackage(packageName)
+    mkdirSync(dirname(clientPath), { recursive: true })
+    writeFileSync(clientPath, 'module.exports = {}\n')
+    const ctx = new Context()
+    ctx.baseUrl = pathToFileURL(root!).href + '/'
+    ctx.provide('loader', {
+      *entries() {
+        yield { options: { name: packageName }, fiber: {}, disabled: false }
+      },
+    })
+    expect(new ClientModuleRegistry(ctx).graph().entries).toMatchObject([{ id: packageName }])
+  })
+
+  it('resolves client packages from the installed host instead of the writable profile', () => {
+    const packageName = '@fixture/packaged-client'
+    const clientPath = writePackage(packageName)
+    mkdirSync(dirname(clientPath), { recursive: true })
+    writeFileSync(clientPath, 'module.exports = {}\n')
+    profileRoot = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-client-profile-')))
+    const ctx = new Context()
+    ctx.baseUrl = pathToFileURL(profileRoot).href + '/'
+    ctx.provide('dshPackageBaseUrl', pathToFileURL(join(root!, 'package.json')).href)
+    ctx.provide('loader', {
+      *entries() {
+        yield { options: { name: packageName }, fiber: {}, disabled: false }
+      },
+    })
+
+    expect(() => createRequire(ctx.baseUrl!).resolve(`${packageName}/package.json`)).toThrow()
+    expect(new ClientModuleRegistry(ctx).graph().entries).toMatchObject([{ id: packageName }])
+  })
+
   it('allows sibling dsh roles', () => {
     const currentName = '@fixture/current-client-field'
     const clientPath = writePackage(currentName, {

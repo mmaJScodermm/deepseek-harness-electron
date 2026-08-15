@@ -19,6 +19,7 @@ import { pathToFileURL } from 'node:url'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { Include } from '@deepseek-ai/cordis-plugin-include'
 import type { EntryTree } from '@deepseek-ai/cordis-plugin-loader'
+import type {} from '@deepseek-ai/dsh-app-boot'
 import { scopeOf, scopeParentOf, type ScopeKey } from '@deepseek-ai/dsh-scope'
 import { PresetMountError, type AgentPreset } from './preset.ts'
 
@@ -44,9 +45,10 @@ const mounted = new WeakMap<object, MountedTree>()
 
 /**
  * The base URL bare specifiers resolve against, per pending mount, keyed by the
- * same config object. Recorded before the subtree is plugged, because `Include`
- * rewrites its own context's `baseUrl` to the composition's directory and the
- * pre-mount value is the only handle on where the harness itself lives.
+ * same config object. A closed app publishes its installed package base; other
+ * launchers fall back to the host composition's base. The value is recorded
+ * before the subtree is plugged because `Include` rewrites its own context's
+ * `baseUrl` to the composition's directory.
  */
 const harnessBase = new WeakMap<object, string>()
 
@@ -69,11 +71,11 @@ class PresetTree extends Include {
    * a package name: a locally authored preset lives under the user's home,
    * where Node's upward `node_modules` walk never reaches the harness's own
    * dependencies, so every `@deepseek-ai/dsh-*` row would fail to import. The
-   * mount records the host composition's base instead, which is inside the
-   * installed harness, and bare names resolve from there. An absolute
-   * filesystem path names neither base and becomes a file URL before Node's
-   * ESM loader receives it, which is required for drive-letter paths on
-   * Windows.
+   * mount records the installed package base published by a closed app, or the
+   * host composition's base for other launchers, and bare names resolve from
+   * there. An absolute filesystem path names neither base and becomes a file
+   * URL before Node's ESM loader receives it, which is required for
+   * drive-letter paths on Windows.
    * @param name - the module specifier from the row.
    * @param getOuterStack - the loader's stack composer for import diagnostics.
    * @returns the imported module, or the `cordis:` builtin.
@@ -338,11 +340,9 @@ export async function mountPreset(agentCtx: Context, preset: AgentPreset): Promi
     )
   }
   const config: Include.Config = { path: pathToFileURL(preset.path).href }
-  // Captured before the subtree exists: the standing scope context still
-  // carries the host composition's base, which is inside the installed
-  // harness and is therefore where a row's package name has to resolve from.
-  /* v8 ignore next -- the Loader sets `baseUrl` on the root before any scoped context derives from it */
-  if (agentCtx.baseUrl !== undefined) harnessBase.set(config, agentCtx.baseUrl)
+  const packageBaseUrl = agentCtx.get('dshPackageBaseUrl') ?? agentCtx.baseUrl
+  /* v8 ignore next -- app-boot or the Loader supplies a package base before any scoped context derives from the root */
+  if (packageBaseUrl !== undefined) harnessBase.set(config, packageBaseUrl)
   // Before the record this mount is about to add: standing mounts are one per
   // preset and live until whole-tree teardown, so pruning here only sweeps
   // records of torn-down runtimes (tests; an HMR reload of the roster).

@@ -90,6 +90,7 @@ function npmPackageOf(id: string): string | undefined {
 }
 
 export default defineConfig({
+  base: './',
   plugins: [rejectStandaloneServe(), react()],
   build: {
     sourcemap: true,

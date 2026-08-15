@@ -15,7 +15,7 @@ We need a UI integration layer. Beyond the existing ACP/stdio baseline, more pro
 
 That demands a stable layered responsibility model in the engineering codebase, so future clients plug in cleanly.
 
-At the same time the physical channels differ per consumer (browser HTTP/WebSocket, in-process fetch/SSE, IPC later), so we also need a channel-independent message model and a single contract source of truth — "adding a method" and "swapping a carrier" must not entangle each other, and every message on the wire must be type-validatable, observable, and reconcilable.
+At the same time the physical channels differ per consumer (browser HTTP/WebSocket, in-process fetch/SSE, Electron IPC), so we also need a channel-independent message model and a single contract source of truth — "adding a method" and "swapping a carrier" must not entangle each other, and every message on the wire must be type-validatable, observable, and reconcilable.
 
 ## Decision
 
@@ -32,7 +32,7 @@ Directories layer as follows:
 - `apps/` holds the externally exported applications, assembled from Client / Host mixtures.
     - `apps/web` (`dsh-web-frontend`) is the vite application: a thin `main.ts` over the shell API exported by `dsh-client-web`.
     - `apps/cli` (`@deepseek-ai/dsh`) dispatches commands: `dsh web` = Host + webserver + the built `dsh-web-frontend` dist; `dsh --profile headless` = [a direct core Agent/Session entry point](2026-08-09-headless-direct-core-entry-point.md), with zero Host, HTTP, or browser layer.
-    - A future Electron application reuses the same web client packages over an IPC fetch carrier.
+    - `apps/electron` reuses the same web client packages over a sandboxed preload IPC carrier; Agent, Session, tools, and providers remain in Electron Main, while the Renderer loads the React build through `file://` with no Node integration. Repository launches retain profile module fallback resolution; packaged launches pass the application installation as the bare-package base because external profile symlinks cannot traverse into `app.asar`. Release builds archive third-party JavaScript in `app.asar`, keep every `@deepseek-ai` package unpacked for dynamic client bundles, workers, and subprocess entry points, and let electron-builder unpack detected native modules and executables. A prepackage audit requires the production dependency closure to provide every mandatory workspace peer before electron-builder assembles an application.
 
 ```
 apps/*  (applications: apps/web = vite app, apps/cli = bin dispatch)
@@ -56,7 +56,7 @@ Direction discipline (every rule auditable from package deps):
 
 TypeScript checks in **two aggregate programs** referenced by a solution root (`tsconfig.json` = solution; `tsconfig.host.json` = host side + tests, excluding `packages/client`; `tsconfig.client.json` = client packages and their tests): both sides merge the cordis `Context` interface under the same keys (`sessions`, `loader`) with different services, so one program would see both declaration merges and report a collision. Shared leaves (session/llm/tools/apiproxy…) build once and are referenced by both programs ([topology](../process/2026-07-22-tsconfig-solution-root-two-aggregates.md)).
 
-On the protocol side: TS interfaces (`packages/host/apiproxy/src/api/`, zero Node dependencies, browser-importable); wire messages unify under a **bidirectional model** — each logical message is classified by "who initiates × request/response" (two axes, four cells, called the four quadrants below), decoupled from the physical channel; clients all inherit `AbstractApiClient` (protocol invariants live entirely in the base class, platform differences are just the `doFetch` transport aspect).
+On the protocol side: TS interfaces (`packages/host/apiproxy/src/api/`, zero Node dependencies, browser-importable); wire messages unify under a **bidirectional model** — each logical message is classified by "who initiates × request/response" (two axes, four cells, called the four quadrants below), decoupled from the physical channel; clients all inherit `AbstractApiClient` (protocol invariants live entirely in the base class, while subclasses provide unary transport and, when needed, stream openers).
 
 #### Layer roles
 
@@ -75,7 +75,7 @@ Packages under `packages/host/*` and `packages/client/*` **must carry the direct
 
 #### How to integrate a new application (operational checklist)
 
-1. **Pick a fetch impersonation**: browser same-origin HTTP / in-process `host.handler.fetch` injection / your own transport-aspect subclass (e.g. future Electron IPC, see the "Subclass table" below).
+1. **Pick a carrier**: browser same-origin HTTP/WebSocket, in-process injected fetch/SSE, Electron preload IPC, or another `AbstractApiClient` subclass (see the "Subclass table" below).
 2. **Write an assembly module under `apps/`**: `startHost()` + a client subclass + the application's private signal/print/exit semantics; a mixture never becomes a package — assembly is written in the app.
 3. **Import `dsh-host-webserver` only if you need HTTP carriage**, otherwise zero ports.
 
@@ -191,7 +191,7 @@ The remaining frame types are not re-copied here; the full unions are `MuxFrame`
 
 ## The client carrier: the AbstractApiClient class family (`fetch/client.ts`)
 
-**Protocol invariants live in the base class; platform differences are two aspects**: the abstract method `doFetch(url, init)` (transport) + the overridable `onEnvelope` (observation).
+**Protocol invariants live in the base class.** Each platform implements `doFetch(url, init)`, may override `openMux`/`openHost` when its stream transport is not fetch/SSE, and may refine `onEnvelope` for observation.
 
 ### IApiClient: the caller view
 
@@ -218,7 +218,7 @@ All four quadrant full forms pass through `onEnvelope`; the base implementation 
 | `InProcessApiClient` | apiproxy itself | the injected `{ fetch }` handler | **The isomorphic point**: `new InProcessApiClient(toFetchHandler(api))` never touches the network yet runs the real wire serialization/zod/SSE framing; carrier tests and callers can exercise the protocol without opening a port, while product `dsh --profile headless` drives core directly |
 | `WebApiClient` | dsh-client-connection | `globalThis.fetch` uplink + one same-origin WebSocket downlink per logical stream | the browser client; physical boundary in the [WebSocket downlink carrier](2026-08-04-websocket-downlink-carrier.md) |
 | `FixtureApiClient` | dsh-client-connection | unused (protocol-layer override) | serverless UI development (`?fixture`): overrides the `callUnary`/`openMux`/`openHost`/`respond` virtuals and is itself the fake server (frame rpcIds minted by it, semantics self-consistent) |
-| IPC bridge subclass (hypothetical example — no such shell exists) | an Electron shell | IPC serialization round trip | would swap only doFetch; contract and base class unchanged |
+| `ElectronApiClient` | dsh-client-connection | sandboxed preload IPC for JSON requests and both event streams | the Electron Renderer; Main dispatches the same logical channels without opening a port |
 
 ## How to extend (operational checklists)
 
@@ -228,13 +228,13 @@ All four quadrant full forms pass through `onEnvelope`; the base implementation 
 
 **Add an error code (2 steps)**: ① add one `RpcErrorDetailsMap` row (details required); ② add one `rpcErrorSchema` discriminatedUnion branch.
 
-**Plug in a new carrier**: subclass `AbstractApiClient` implementing only `doFetch`; to intercept at the protocol layer (like the fixture), override the `callUnary`/`openMux`/`openHost` virtuals instead. Contract and base class stay unchanged.
+**Plug in a new carrier**: subclass `AbstractApiClient` and implement `doFetch`; override `openMux`/`openHost` when the platform does not carry streams through fetch/SSE. A protocol substitute such as the fixture overrides `callUnary` and the stream openers instead. Contract and base class stay unchanged.
 
 **Promote a reserved method**: copy the reserved signature into the domain interface → add the map row → add the schema pair → add the UNARY_ROUTES row → implement.
 
 ## Consequences
 
-Every client consumes one contract: adding a unary method is a five-step mechanical change from a single signature, swapping a carrier touches only a `doFetch` subclass, and every wire message is zod-validated, observable through the envelope tap, and reconcilable by rpcId. Ordinary unary calls remain bounded, while `host.pickDirectory` and `command.execute` may stay pending until the operation finishes or caller/connection cancellation arrives; this accepts that a non-cooperative user-paced operation can hang its request rather than treating valid operation duration as transport failure. The other accepted costs: two groups of packages need explicit tsconfig paths entries, and the reserved methods (fork/inject/task.list/listModels/hostInstanceId) stay dormant until a real consumer arrives.
+Every client consumes one contract: adding a unary method is a five-step mechanical change from a single signature, swapping a carrier stays inside its client subclass and application bridge, and every wire message is zod-validated, observable through the envelope tap, and reconcilable by rpcId. Ordinary unary calls remain bounded, while `host.pickDirectory` and `command.execute` may stay pending until the operation finishes or caller/connection cancellation arrives; this accepts that a non-cooperative user-paced operation can hang its request rather than treating valid operation duration as transport failure. The other accepted costs: two groups of packages need explicit tsconfig paths entries, and the reserved methods (fork/inject/task.list/listModels/hostInstanceId) stay dormant until a real consumer arrives.
 
 ## Alternatives considered
 

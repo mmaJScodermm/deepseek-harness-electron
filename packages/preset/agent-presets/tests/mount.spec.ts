@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -32,15 +33,27 @@ const ROOTS = [
   { path: join(FIXTURES, 'user'), trust: 'user' as const },
 ]
 
+interface HarnessOptions {
+  /** Base URL inherited by the host composition. */
+  readonly baseUrl?: string
+  /** Installed package base published by a closed app. */
+  readonly packageBaseUrl?: string
+}
+
 /**
  * A composition carrying the registries a preset contributes to, plus the
  * preset roster.
  * @param roster - roster config, defaulting to the fixture roots.
+ * @param options - optional host and installed-package resolution bases.
  * @returns the booted context.
  */
-async function harness(roster: Config = { default: 'standard', roots: ROOTS, includeUserRoot: false }): Promise<Context> {
+async function harness(
+  roster: Config = { default: 'standard', roots: ROOTS, includeUserRoot: false },
+  options: HarnessOptions = {},
+): Promise<Context> {
   const ctx = new Context()
-  ctx.baseUrl = pathToFileURL(FIXTURES).href + '/'
+  ctx.baseUrl = options.baseUrl ?? pathToFileURL(FIXTURES).href + '/'
+  if (options.packageBaseUrl !== undefined) ctx.provide('dshPackageBaseUrl', options.packageBaseUrl)
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   await ctx.plugin(LlmRuntime)
@@ -85,6 +98,47 @@ beforeEach(async () => {
 })
 
 describe('composing an agent from a preset', () => {
+  it('resolves bare packages from the installed app instead of the writable profile', async () => {
+    const packageName = '@fixture/packaged-preset-plugin'
+    const installedRoot = await mkdtemp(join(tmpdir(), 'dsh-preset-installed-'))
+    const profileRoot = await mkdtemp(join(tmpdir(), 'dsh-preset-profile-'))
+    const packageDir = join(installedRoot, 'node_modules', ...packageName.split('/'))
+    const presetDir = join(profileRoot, 'packaged')
+    await mkdir(packageDir, { recursive: true })
+    await mkdir(presetDir)
+    await writeFile(join(packageDir, 'package.json'), JSON.stringify({
+      name: packageName,
+      type: 'module',
+      exports: './index.mjs',
+    }))
+    await writeFile(join(packageDir, 'index.mjs'), 'export function apply() {}\n')
+    await writeFile(
+      join(presetDir, COMPOSITION_FILE),
+      `- id: packaged\n  name: ${JSON.stringify(packageName)}\n`,
+    )
+    const profileBaseUrl = pathToFileURL(profileRoot).href + '/'
+    const packageBaseUrl = pathToFileURL(join(installedRoot, 'package.json')).href
+    const scoped = await harness({
+      default: 'packaged',
+      roots: [{ path: profileRoot, trust: 'user' }],
+      includeUserRoot: false,
+    }, { baseUrl: profileBaseUrl, packageBaseUrl })
+    const imported = vi.spyOn(scoped.loader.internal!, 'import')
+
+    try {
+      expect(() => createRequire(profileBaseUrl).resolve(packageName)).toThrow()
+
+      const agent = await agentOn(scoped, 'sess-packaged-preset')
+
+      expect(agent.id).toBe(SessionId('sess-packaged-preset'))
+      expect(imported).toHaveBeenCalledWith(packageName, packageBaseUrl, {})
+    } finally {
+      await scoped.fiber.dispose()
+      await rm(installedRoot, { recursive: true, force: true })
+      await rm(profileRoot, { recursive: true, force: true })
+    }
+  })
+
   it('hands an absolute plugin path to Node as a file URL', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-preset-absolute-plugin-'))
     const presetDir = join(root, 'absolute')
