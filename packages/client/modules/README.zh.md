@@ -8,7 +8,7 @@
 
 解析分支顺序（`import(specifier)`）：平台种子词 → 外壳实例；记忆化记录 → 表层；外壳自身的静态注册表（`registerStatic`，app-shell）→ 模块；已注册 factory → 物化；模块图记录（`window.__DSH_BOOT__`）→ 加载外部 classic script + 物化；其他情况一律抛出异常。这是构建时 bundle 纯度门禁的运行时镜像。交给 factory 的同步 `require` 采用相同顺序，但不含异步加载分支，并把观察到的边记录到模块记录中。`prefetch` 是第一阶段到达钩子（只加载脚本并注册 factory；并发调用共享一个进行中的任务）；`invalidate` 会丢弃 factory 与物化记录，使下一次 prefetch/import 重新加载脚本；它是 HMR（热模块替换）钩子。
 
-Node 侧会扫描已启用的 Loader 配置项以发现 web `dsh.client` 包，解析每个 `exports["./client"]`，并把构建后的 bundle 哈希写入启动图。封闭打包运行时提供 `ctx.dshPackageBaseUrl` 时，包元数据从该基准解析；否则从配置树的 `ctx.baseUrl` 解析，profile 目录仍是配置相对路径的基准。没有 HTTP 载体时，`graph()` 与 `clientPath(id)` 仍然可用。存在 `ctx.webServer` 时，该服务会把启动图注入 `index.html`，并通过 `/plugins` 提供 bundle 及其 sourcemap；Electron 则把图中的 URL 改写为受限自定义协议，并通过 `clientPath(id)` 解析文件。源码启动会把宿主侧导入映射到 TypeScript 源码，但仍消费这一构建后的客户端导出；缺失文件共享一条构建说明，随后以包／路径列表列出各项，而无关的文件系统错误仍是独立故障。
+Node 侧会扫描已启用的 Loader 配置项以发现 web `dsh.client` 包，解析每个 `exports["./client"]`，并把构建后的 bundle 哈希写入启动图。封闭打包运行时提供 `ctx.dshPackageBaseUrl` 时，包元数据从该基准解析；否则从配置树的 `ctx.baseUrl` 解析，profile 目录仍是配置相对路径的基准。没有 HTTP 载体时，`graph()` 与 `clientPath(id)` 仍然可用。`ctx.webServer` 加入组合时，Cordis 注入会注册 `/plugins` 路由和 `index.html` 启动图转换，该行为不依赖服务激活顺序；两项注册均会随该服务一同移除。Electron 不挂载 `webServer`，它会把图中的 URL 改写为受限自定义协议，并通过 `clientPath(id)` 解析文件。源码启动会把宿主侧导入映射到 TypeScript 源码，但仍消费这一构建后的客户端导出；缺失文件共享一条构建说明，随后以包／路径列表列出各项，而无关的文件系统错误仍是独立故障。
 
 ## 模型体验
 

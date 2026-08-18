@@ -18,6 +18,13 @@ The Electron application runs the complete Harness Host inside Electron Main rat
 
 The desktop application reuses the `web` profile and its plugin roster with an Electron overlay that disables the HTTP server and Web-only runtime rows. Host-authored client plugins are loaded through the allowlisted `dsh-plugin://` protocol, so the desktop application opens no local port. See the [Electron application reference](apps/electron/README.md) and the [architecture documentation](docs/architecture.md).
 
+The browser and desktop applications are independent surfaces over the same Harness composition; neither transport depends on the other:
+
+| Command | Host | UI transport |
+|---|---|---|
+| `pnpm dsh web` | Node.js CLI process with `webServer` | Browser HTTP + WebSocket |
+| `pnpm electron` | Electron Main with HTTP-only rows disabled | Preload IPC |
+
 ### Runtime layout
 
 ```mermaid
@@ -66,7 +73,7 @@ There are three plugin compositions. Host plugins come from profile bundles, the
 
 Packaged Electron keeps configuration paths and package paths separate. Profiles and relative configuration remain under the writable Harness home, while `ctx.dshPackageBaseUrl` makes bare `@deepseek-ai/dsh-*` rows resolve from the packaged application's dependency tree.
 
-The Web application uses the same client plugins, ApiProxy, Agent Loop, and capability providers, but replaces preload IPC with its HTTP/event-stream carrier. Headless profiles omit the Renderer and transport layers and invoke the Host directly.
+The Web application uses the same client plugins, ApiProxy, Agent Loop, and capability providers, but serves `window.__DSH_BOOT__` in `index.html` and uses HTTP/WebSocket carriage. The Electron overlay applies only to the desktop boot and supplies the graph through preload instead; it does not alter the stored Web profile. Headless profiles omit the Renderer and transport layers and invoke the Host directly.
 
 ### One prompt, end to end
 

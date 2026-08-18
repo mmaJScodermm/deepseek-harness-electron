@@ -498,6 +498,7 @@ export async function mountRootInclude(
       throw new Error('app-boot: bareModuleBaseUrl conflicts with the provided dshPackageBaseUrl')
     }
   }
+  console.info(111, patches)
   ctx.loader.builtins.include = bareModuleBaseUrl === undefined
     ? Include
     : class HostResolvedRootInclude extends Include {

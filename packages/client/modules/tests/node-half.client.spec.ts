@@ -41,8 +41,8 @@ function writePackage(
   return clientPath
 }
 
-/** Construct the node-half service and capture its plugin-bundle route. */
-function constructWithRoute(packageNames: string[]): { service: ClientModuleRegistry; route: WebRoute } {
+/** Construct a context carrying the enabled fixture entries. */
+function constructContext(packageNames: string[]): Context {
   const ctx = new Context()
   ctx.baseUrl = pathToFileURL(root!).href + '/'
   ctx.provide('loader', {
@@ -52,6 +52,12 @@ function constructWithRoute(packageNames: string[]): { service: ClientModuleRegi
       }
     },
   })
+  return ctx
+}
+
+/** Mount the node-half service and capture its plugin-bundle route. */
+async function constructWithRoute(packageNames: string[]): Promise<{ service: ClientModuleRegistry; route: WebRoute }> {
+  const ctx = constructContext(packageNames)
   let route: WebRoute | undefined
   const webServer: Pick<WebServer, 'port' | 'register' | 'tapIndex'> = {
     port: 0,
@@ -62,14 +68,15 @@ function constructWithRoute(packageNames: string[]): { service: ClientModuleRegi
     tapIndex: () => () => {},
   }
   ctx.provide('webServer', webServer as WebServer)
-  const service = new ClientModuleRegistry(ctx)
+  await ctx.plugin(ClientModuleRegistry).await()
+  const service = ctx.clientModules
   if (route === undefined) throw new Error('client bundle route was not registered')
   return { service, route }
 }
 
 /** Construct the node-half service over the enabled fixture entries. */
 function construct(packageNames: string[]): ClientModuleRegistry {
-  return constructWithRoute(packageNames).service
+  return new ClientModuleRegistry(constructContext(packageNames))
 }
 
 describe('client bundle activation', () => {
@@ -105,6 +112,49 @@ describe('client bundle activation', () => {
 
     expect(() => createRequire(ctx.baseUrl!).resolve(`${packageName}/package.json`)).toThrow()
     expect(new ClientModuleRegistry(ctx).graph().entries).toMatchObject([{ id: packageName }])
+  })
+
+  it('attaches and disposes the Web carrier when it activates after the registry', async () => {
+    const packageName = '@fixture/late-web-carrier'
+    const clientPath = writePackage(packageName)
+    mkdirSync(dirname(clientPath), { recursive: true })
+    writeFileSync(clientPath, 'module.exports = {}\n')
+    const ctx = new Context()
+    ctx.baseUrl = pathToFileURL(root!).href + '/'
+    ctx.provide('loader', {
+      *entries() {
+        yield { options: { name: packageName }, fiber: {}, disabled: false }
+      },
+    })
+    const registryFiber = ctx.plugin(ClientModuleRegistry)
+    await registryFiber.await()
+
+    let route: WebRoute | undefined
+    let transform: ((html: string) => string) | undefined
+    let routeDisposed = false
+    let transformDisposed = false
+    const webFiber = ctx.plugin({
+      apply(webCtx) {
+        webCtx.provide('webServer', {
+          register: (candidate: WebRoute) => {
+            route = candidate
+            return () => { routeDisposed = true }
+          },
+          tapIndex: (candidate: (html: string) => string) => {
+            transform = candidate
+            return () => { transformDisposed = true }
+          },
+        } as WebServer)
+      },
+    })
+    await webFiber.await()
+
+    expect(route).toMatchObject({ kind: 'prefix', path: '/plugins' })
+    expect(transform?.('<head></head>')).toContain('window.__DSH_BOOT__')
+    await webFiber.dispose()
+    expect(routeDisposed).toBe(true)
+    expect(transformDisposed).toBe(true)
+    await registryFiber.dispose()
   })
 
   it('allows sibling dsh roles', () => {
@@ -159,7 +209,7 @@ describe('client bundle activation', () => {
     writeFileSync(clientPath, 'module.exports = {}\n')
     const map = '{"version":3,"sources":["src/client/index.tsx"]}\n'
     writeFileSync(`${clientPath}.map`, map)
-    const { route } = constructWithRoute([packageName])
+    const { route } = await constructWithRoute([packageName])
     let status = 0
     let headers: Record<string, string> | undefined
     let body = ''

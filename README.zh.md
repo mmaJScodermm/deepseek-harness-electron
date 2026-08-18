@@ -18,6 +18,13 @@ Electron 应用直接在 Electron Main 中运行完整的 Harness Host，不会�
 
 桌面应用复用 `web` profile 及其插件名单，再通过 Electron overlay 禁用 HTTP 服务器和 Web 专用运行时配置项。Host 组合出的客户端插件经受限的 `dsh-plugin://` 协议加载，因此桌面应用不会打开本地端口。详见 [Electron 应用说明](apps/electron/README.md)与[架构文档](docs/architecture.md)。
 
+浏览器应用与桌面应用是基于同一 Harness 组合的独立入口，两种传输方式互不依赖：
+
+| 命令 | Host | UI 传输 |
+|---|---|---|
+| `pnpm dsh web` | 挂载 `webServer` 的 Node.js CLI 进程 | 浏览器 HTTP + WebSocket |
+| `pnpm electron` | 禁用 HTTP 专用配置项的 Electron Main | Preload IPC |
+
 ### 运行时布局
 
 ```mermaid
@@ -66,7 +73,7 @@ flowchart LR
 
 打包版 Electron 会把配置路径与包解析路径分开。profile 与相对配置仍位于可写的 Harness home 下，而 `ctx.dshPackageBaseUrl` 让裸 `@deepseek-ai/dsh-*` 配置项从打包应用的依赖树解析。
 
-Web 应用复用同一套客户端插件、ApiProxy、Agent Loop 与能力 provider，只把 preload IPC 换成 HTTP／事件流载体。Headless profile 则不加载 Renderer 和传输层，直接调用 Host。
+Web 应用复用同一套客户端插件、ApiProxy、Agent Loop 与能力 provider，但会在 `index.html` 中提供 `window.__DSH_BOOT__`，并使用 HTTP／WebSocket 传输。Electron overlay 仅应用于桌面端启动，改由 preload 提供启动图，不会修改已保存的 Web profile。Headless profile 则不加载 Renderer 和传输层，直接调用 Host。
 
 ### 一次对话的完整链路
 
