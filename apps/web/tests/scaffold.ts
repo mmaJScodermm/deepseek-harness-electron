@@ -46,7 +46,7 @@ import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type {
   LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import type { ReplayHandle } from '@deepseek-ai/dsh-llm-replay'
+import type { ReplayHandle, ReplayProviderConfig } from '@deepseek-ai/dsh-llm-replay'
 import { installLlmReplay, parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
 import SessionStore, {
   packChunkRuns,
@@ -109,7 +109,7 @@ const SHIPPED_PRESET_DIR = join(REPO_ROOT, 'apps/cli/config/agent-presets')
 // catch-all would leave resolveModelInfo unroutable and compaction-basic's
 // post-step pressure check would warn every step). The published
 // contextWindow keeps that pressure path provably inert for small fixtures.
-const REPLAY_PROVIDERS = [{
+const REPLAY_PROVIDERS: ReplayProviderConfig[] = [{
   id: 'deepseek-official',
   name: 'DeepSeek',
   models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', contextWindow: 128_000 }],
@@ -123,7 +123,7 @@ const REPLAY_PROVIDERS = [{
  * not a product state.
  */
 class RouteOnlyAdapter extends LlmAdapter {
-  constructor(private readonly providers: typeof REPLAY_PROVIDERS) {
+  constructor(private readonly providers: readonly ReplayProviderConfig[]) {
     super()
   }
 
@@ -133,17 +133,24 @@ class RouteOnlyAdapter extends LlmAdapter {
 
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     return Promise.resolve((this.providers.find(entry => entry.id === provider)?.models ?? [])
-      .map(model => ({ provider, id: model.id, name: model.name })))
+      .map(model => ({
+        provider,
+        id: model.id,
+        name: model.name ?? model.id,
+        ...model.description === undefined ? {} : { description: model.description },
+        ...model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] },
+      })))
   }
 
   override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const listed = this.providers.find(entry => entry.id === provider)?.models
-      .find(entry => entry.id === model)
+      ?.find(entry => entry.id === model)
     return Promise.resolve({
       provider,
       id: model,
       name: listed?.name ?? model,
       ...listed?.contextWindow === undefined ? {} : { contextWindow: listed.contextWindow },
+      ...listed?.inputModalities === undefined ? {} : { inputModalities: [...listed.inputModalities] },
     })
   }
 
@@ -155,11 +162,19 @@ class RouteOnlyAdapter extends LlmAdapter {
   }
 }
 
-function replayProviders(contextWindow: number | undefined): typeof REPLAY_PROVIDERS {
-  if (contextWindow === undefined) return REPLAY_PROVIDERS
-  return REPLAY_PROVIDERS.map(provider => ({
+function replayProviders(
+  contextWindow: number | undefined,
+  providers: readonly ReplayProviderConfig[] = REPLAY_PROVIDERS,
+): ReplayProviderConfig[] {
+  if (contextWindow === undefined) return providers.map(provider => ({
     ...provider,
-    models: provider.models.map(model => ({ ...model, contextWindow })),
+    ...provider.models === undefined ? {} : { models: provider.models.map(model => ({ ...model })) },
+  }))
+  return providers.map(provider => ({
+    ...provider,
+    ...provider.models === undefined
+      ? {}
+      : { models: provider.models.map(model => ({ ...model, contextWindow })) },
   }))
 }
 
@@ -214,6 +229,12 @@ export interface LaunchOptions {
   paceMs?: number
   /** Synthetic model capacity for UI scenarios whose seeded history must remain uncompacted. */
   replayContextWindow?: number
+  /**
+   * Provider/model routes published by the replay adapter. Omit for the
+   * shipped DeepSeek-only catalog; multimodel scenarios may declare every
+   * route they exercise while keeping one positional replay script.
+   */
+  replayProviders?: ReplayProviderConfig[]
   /**
    * Tool presentation mode patched onto the shipped `tools` row (`code`
    * collapses the wire to run_code + the SDK prompt section). Omit for the
@@ -550,7 +571,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     if (mode !== 'record' && options.replayFixture !== undefined) {
       replayHandle = installLlmReplay(ctx, {
         file: options.replayFixture,
-        providers: replayProviders(options.replayContextWindow),
+        providers: replayProviders(options.replayContextWindow, options.replayProviders),
         ...(options.replayOverride === undefined ? {} : { overrideFile: options.replayOverride }),
         ...(options.replayChildFixtures === undefined ? {} : { childFiles: options.replayChildFixtures }),
         ...(options.paceMs === undefined ? {} : { paceMs: options.paceMs }),
@@ -562,8 +583,8 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       // a fixture would, with streaming that still fails loud: the scenario
       // issues no model calls, and one that slipped in must not pass quietly.
       ctx.effect(() => ctx.llm.registerAdapter(
-        replayProviders(options.replayContextWindow).map(provider => provider.id),
-        new RouteOnlyAdapter(replayProviders(options.replayContextWindow)),
+        replayProviders(options.replayContextWindow, options.replayProviders).map(provider => provider.id),
+        new RouteOnlyAdapter(replayProviders(options.replayContextWindow, options.replayProviders)),
       ), 'web e2e scaffold: route-only adapter')
     }
   } catch (error) {

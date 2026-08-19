@@ -472,6 +472,30 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 来源：[`packages/hooks/hook-protocol/src/types.ts:31`](../packages/hooks/hook-protocol/src/types.ts)
 
+### `image-analysis/*`
+
+<a id="image-analysisrequest--log-only"></a>
+
+#### `image-analysis/request` — log-only
+
+```ts persistence-catalog
+/** Exact model-visible image-analysis request recorded before dispatch. */
+'image-analysis/request': ImageAnalysisRequestEventData
+```
+
+来源：[`packages/llm/llm-image-analysis/src/index.ts:106`](../packages/llm/llm-image-analysis/src/index.ts)
+
+<a id="image-analysisresult--log-only"></a>
+
+#### `image-analysis/result` — log-only
+
+```ts persistence-catalog
+/** Successful text-only result recorded before its surface replacement. */
+'image-analysis/result': ImageAnalysisResultEventData
+```
+
+来源：[`packages/llm/llm-image-analysis/src/index.ts:108`](../packages/llm/llm-image-analysis/src/index.ts)
+
 ### `llm/*`
 
 <a id="llmretry--log-only"></a>

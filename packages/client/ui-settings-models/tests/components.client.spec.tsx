@@ -83,7 +83,7 @@ const DEFAULT_DEEPSEEK_MODELS = [
   { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', contextWindow: 1_000_000 },
 ]
 
-function wireNamespaces(): SettingsNamespaceView[] {
+function wireNamespaces(visualRoute?: { provider: string; model: string }): SettingsNamespaceView[] {
   return [
     {
       ns: 'llm-deepseek',
@@ -120,6 +120,16 @@ function wireNamespaces(): SettingsNamespaceView[] {
       secrets: [],
       revision: 0,
     },
+    {
+      ns: 'llm-image-analysis',
+      schema: {},
+      value: visualRoute ?? {},
+      user: visualRoute ?? {},
+      base: {},
+      applies: 'live',
+      secrets: [],
+      revision: 0,
+    },
   ]
 }
 
@@ -140,12 +150,14 @@ function scriptedFace(overrides: {
   mutate?: ReturnType<typeof vi.fn>
   set?: ReturnType<typeof vi.fn>
   unset?: ReturnType<typeof vi.fn>
+  models?: ReturnType<typeof vi.fn>
 } = {}) {
   const update = overrides.update ?? vi.fn(() => Promise.resolve(ok(wireNamespaces()[2])))
   const replace = overrides.replace ?? vi.fn(() => Promise.resolve(ok(wireNamespaces()[2])))
   const mutate = overrides.mutate ?? vi.fn(() => Promise.resolve(ok(wireNamespaces()[2])))
   const set = overrides.set ?? vi.fn(() => Promise.resolve(ok({})))
   const unset = overrides.unset ?? vi.fn(() => Promise.resolve(ok({})))
+  const models = overrides.models ?? vi.fn(() => Promise.resolve(ok({ groups: [], failures: [] })))
   const face = {
     llm: {
       providers: vi.fn(() => Promise.resolve(ok({
@@ -158,7 +170,7 @@ function scriptedFace(overrides: {
           { provider: 'plain', displayName: 'plain', settingsNs: 'llm-plain', settingsPath: ['profiles', 'plain'], active: false },
         ],
       }))),
-      models: vi.fn(() => Promise.resolve(ok({ groups: [], failures: [] }))),
+      models,
     },
     settings: {
       describe: vi.fn(() => Promise.resolve(ok({ writable: true, hasDocument: false, namespaces: wireNamespaces() }))),
@@ -178,7 +190,7 @@ function scriptedFace(overrides: {
       unset,
     },
   }
-  return { face, update, replace, mutate, set, unset }
+  return { face, update, replace, mutate, set, unset, models }
 }
 
 type WireFace = ConstructorParameters<typeof ModelsSettingsStore>[0]
@@ -232,11 +244,161 @@ describe('ModelsSection', () => {
     expect(document.body.textContent).toBe('')
   })
 
+  it('presents image input as an optional DeepSeek enhancement and persists enabling and disabling it', async () => {
+    const models = vi.fn(() => Promise.resolve(ok({
+      groups: [{
+        id: 'qwen',
+        name: 'Qwen',
+        models: [
+          { id: 'qwen-vl', name: 'Qwen VL', inputModalities: ['text', 'image'] },
+          { id: 'qwen-text', name: 'Qwen Text', inputModalities: ['text'] },
+          { id: 'qwen-unknown', name: 'Qwen Unknown' },
+        ],
+      }],
+      failures: [],
+    })))
+    let visualRoute: { provider: string; model: string } | undefined
+    const scripted = scriptedFace({ models })
+    scripted.face.settings.describe.mockImplementation(() => Promise.resolve(ok({
+      writable: true,
+      hasDocument: visualRoute !== undefined,
+      namespaces: wireNamespaces(visualRoute),
+    })))
+    scripted.mutate.mockImplementation((payload: { ops: Array<{ op: string; path: string[]; value?: unknown }> }) => {
+      const provider = payload.ops.find(op => op.path[0] === 'provider')
+      const model = payload.ops.find(op => op.path[0] === 'model')
+      visualRoute = provider?.op === 'set' && model?.op === 'set'
+        ? { provider: provider.value as string, model: model.value as string }
+        : undefined
+      return Promise.resolve(ok(wireNamespaces(visualRoute)[3]))
+    })
+    await mountFace(scripted)
+    const toggle = screen.getByRole('switch', { name: en.imageUnderstanding })
+    const route = JSON.stringify(['qwen', 'qwen-vl'])
+
+    expect(screen.getByText(en.deepSeekPrimary)).toBeTruthy()
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(screen.queryByLabelText(en.visionModel)).toBeNull()
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    const select = screen.getByLabelText<HTMLSelectElement>(en.visionModel)
+    expect([...select.options].map(option => option.textContent)).toEqual([
+      en.visionModelChoose,
+      'Qwen VL (qwen-vl)',
+    ])
+    expect(screen.getByText(en.visionEnhancementPending)).toBeTruthy()
+    expect(select.closest('div')?.textContent).toContain(en.images)
+    expect(select.closest('div')?.textContent).toContain('DeepSeek')
+    fireEvent.change(select, { target: { value: route } })
+    await waitFor(() => {
+      expect(scripted.mutate).toHaveBeenCalledWith({
+        ns: 'llm-image-analysis',
+        ops: [
+          { op: 'set', path: ['provider'], value: 'qwen' },
+          { op: 'set', path: ['model'], value: 'qwen-vl' },
+        ],
+        expectedRevision: 0,
+      })
+    })
+    await screen.findByText(en.visionEnhancementSaved)
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.click(toggle)
+    await waitFor(() => {
+      expect(scripted.mutate).toHaveBeenLastCalledWith({
+        ns: 'llm-image-analysis',
+        ops: [
+          { op: 'unset', path: ['provider'] },
+          { op: 'unset', path: ['model'] },
+        ],
+        expectedRevision: 0,
+      })
+    })
+    await waitFor(() => { expect(toggle.getAttribute('aria-checked')).toBe('false') })
+    expect(screen.queryByLabelText(en.visionModel)).toBeNull()
+  })
+
+  it('restores the committed visual route after conflicts and transport failures', async () => {
+    const models = vi.fn(() => Promise.resolve(ok({
+      groups: [{
+        id: 'qwen',
+        name: 'Qwen',
+        models: [{ id: 'qwen-vl', name: 'Qwen VL', inputModalities: ['text', 'image'] }],
+      }],
+      failures: [],
+    })))
+    const conflict = vi.fn(() => Promise.resolve(fail('stale', 'settings-conflict')))
+    const mounted = await mountSection({ models, mutate: conflict })
+    fireEvent.click(screen.getByRole('switch', { name: en.imageUnderstanding }))
+    const select = screen.getByLabelText<HTMLSelectElement>(en.visionModel)
+    fireEvent.change(select, { target: { value: JSON.stringify(['qwen', 'qwen-vl']) } })
+    await screen.findByText(en.conflict)
+    expect(select.value).toBe('')
+
+    mounted.view.unmount()
+    const transport = vi.fn(() => Promise.reject(new Error('settings transport offline')))
+    await mountSection({ models, mutate: transport })
+    fireEvent.click(screen.getByRole('switch', { name: en.imageUnderstanding }))
+    const retry = screen.getByLabelText<HTMLSelectElement>(en.visionModel)
+    fireEvent.change(retry, { target: { value: JSON.stringify(['qwen', 'qwen-vl']) } })
+    await screen.findByText('settings transport offline')
+    expect(retry.value).toBe('')
+  })
+
+  it('shows a configured visual route that disappeared from the model catalog', async () => {
+    const models = vi.fn(() => Promise.resolve(ok({
+      groups: [{
+        id: 'qwen',
+        name: 'Qwen',
+        models: [{ id: 'qwen-vl', name: 'Qwen VL', inputModalities: ['text', 'image'] }],
+      }],
+      failures: [],
+    })))
+    const scripted = scriptedFace({ models })
+    scripted.face.settings.describe.mockResolvedValue(ok({
+      writable: true,
+      hasDocument: true,
+      namespaces: wireNamespaces({ provider: 'qwen', model: 'retired-vl' }),
+    }))
+    await mountFace(scripted)
+
+    const select = screen.getByLabelText<HTMLSelectElement>(en.visionModel)
+    expect(select.value).toBe(JSON.stringify(['qwen', 'retired-vl']))
+    expect(select.selectedOptions[0]?.textContent)
+      .toBe(`${en.visionModelUnavailable}: qwen / retired-vl`)
+    expect(select.selectedOptions[0]?.disabled).toBe(true)
+    expect(select.disabled).toBe(false)
+    expect(screen.getByRole('switch', { name: en.imageUnderstanding }).getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('shows the configured enhancement but disables its controls when settings are read-only', async () => {
+    const models = vi.fn(() => Promise.resolve(ok({
+      groups: [{
+        id: 'qwen',
+        name: 'Qwen',
+        models: [{ id: 'qwen-vl', name: 'Qwen VL', inputModalities: ['text', 'image'] }],
+      }],
+      failures: [],
+    })))
+    const scripted = scriptedFace({ models })
+    scripted.face.settings.describe.mockResolvedValue(ok({
+      writable: false,
+      hasDocument: true,
+      namespaces: wireNamespaces({ provider: 'qwen', model: 'qwen-vl' }),
+    }))
+    await mountFace(scripted)
+    const toggle = screen.getByRole('switch', { name: en.imageUnderstanding })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(toggle.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByLabelText<HTMLSelectElement>(en.visionModel).disabled).toBe(true)
+  })
+
   it('renders the unkeyed whole-section provider as an open setup card in the first-run posture', async () => {
     await mountFirstRun()
     // Nothing is reachable yet, and DeepSeek has no configured credential and
     // no stored apiKey → setup card.
     expect(screen.getByText('DeepSeek')).toBeTruthy()
+    expect(screen.getByRole('switch', { name: en.imageUnderstanding })).toBeTruthy()
     expect(screen.getByLabelText(en.keyInput)).toBeTruthy()
     expect(screen.getByText('openai')).toBeTruthy()
     expect(screen.queryByText('Active')).toBeNull()

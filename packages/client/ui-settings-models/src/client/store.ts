@@ -7,7 +7,8 @@
  */
 
 import type {
-  ConfigurableProviderView, CredentialView, IApiClient, SettingsNamespaceView,
+  ConfigurableProviderView, CredentialView, IApiClient, ModelCatalogFailure,
+  ModelProviderGroup, SettingsNamespaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
@@ -44,6 +45,10 @@ export interface ModelsSettingsState {
   writable: boolean
   /** Every configurable provider joined with its configured/credential state. */
   rows: readonly ProviderRow[]
+  /** Registered providers and models available for secondary-model selectors. */
+  modelGroups: readonly ModelProviderGroup[]
+  /** Provider-local catalog failures that did not hide sound groups. */
+  modelFailures: readonly ModelCatalogFailure[]
   /** Namespace views by ns, for the editor's schema/layers/secrets. */
   namespaces: ReadonlyMap<string, SettingsNamespaceView>
 }
@@ -99,7 +104,14 @@ function apiKeyEnvOf(namespace: SettingsNamespaceView | undefined, path: readonl
 export class ModelsSettingsStore {
   /** The snapshot the section renders from (uSES-safe store). */
   readonly store: SnapshotStore<ModelsSettingsState> = createSnapshotStore<ModelsSettingsState>({
-    status: 'idle', error: null, credentialError: null, writable: false, rows: [], namespaces: new Map(),
+    status: 'idle',
+    error: null,
+    credentialError: null,
+    writable: false,
+    rows: [],
+    modelGroups: [],
+    modelFailures: [],
+    namespaces: new Map(),
   })
 
   /** Latest load wins; an older response never overwrites a newer one. */
@@ -120,16 +132,22 @@ export class ModelsSettingsStore {
     const generation = ++this.generation
     this.store.update((s) => { s.status = 'loading'; s.error = null })
     let providers: ConfigurableProviderView[]
+    let modelGroups: ModelProviderGroup[]
+    let modelFailures: ModelCatalogFailure[]
     let writable: boolean
     let views: SettingsNamespaceView[]
     try {
-      const [providersResponse, settingsResponse] = await Promise.all([
+      const [providersResponse, modelsResponse, settingsResponse] = await Promise.all([
         this.api.llm.providers({}),
+        this.api.llm.models({}),
         this.api.settings.describe({}),
       ])
       if (!providersResponse.result.ok) throw new Error(providersResponse.result.error.message)
+      if (!modelsResponse.result.ok) throw new Error(modelsResponse.result.error.message)
       if (!settingsResponse.result.ok) throw new Error(settingsResponse.result.error.message)
       providers = providersResponse.result.value.providers
+      modelGroups = modelsResponse.result.value.groups
+      modelFailures = modelsResponse.result.value.failures
       writable = settingsResponse.result.value.writable
       views = settingsResponse.result.value.namespaces
     } catch (error) {
@@ -184,6 +202,8 @@ export class ModelsSettingsStore {
           ? { credential: credentials[row.apiKeyEnv] }
           : {},
       }))
+      s.modelGroups = modelGroups
+      s.modelFailures = modelFailures
       s.namespaces = namespaces
     })
   }

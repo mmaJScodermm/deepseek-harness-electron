@@ -12,9 +12,9 @@
  * re-renders from pushed invalidations or the post-apply reload.
  */
 
-import { useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
+import type { IApiClient, ModelProviderGroup, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import { Button, IconPlusOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-web-react'
 import { CustomProviderCard } from './CustomProviderCard.tsx'
@@ -48,6 +48,232 @@ export interface ProviderIdentity {
   provider: string
   /** Human-facing provider name. */
   displayName: string
+}
+
+/** Settings namespace owned by the optional Host image-analysis plugin. */
+export const IMAGE_ANALYSIS_NAMESPACE = 'llm-image-analysis'
+
+/** One image-capable route offered by the visual-model selector. */
+export interface VisualModelOption {
+  provider: string
+  providerName: string
+  model: string
+  modelName: string
+}
+
+/** Select only exact catalog entries that explicitly advertise image input. */
+export function visualModelOptions(groups: readonly ModelProviderGroup[]): VisualModelOption[] {
+  return groups.flatMap(group => group.models.flatMap(model =>
+    model.inputModalities?.includes('image') === true
+      ? [{ provider: group.id, providerName: group.name, model: model.id, modelName: model.name }]
+      : []))
+}
+
+/** Encode an exact route without imposing delimiter restrictions on provider or model ids. */
+function visualRouteValue(route: { provider: string; model: string } | undefined): string {
+  return route === undefined ? '' : JSON.stringify([route.provider, route.model])
+}
+
+/** Read a complete optional route from the redacted settings descriptor. */
+function visualRouteOf(namespace: SettingsNamespaceView | undefined): { provider: string; model: string } | undefined {
+  if (typeof namespace?.value !== 'object' || namespace.value === null) return undefined
+  const value = namespace.value as { provider?: unknown; model?: unknown }
+  return typeof value.provider === 'string' && typeof value.model === 'string'
+    ? { provider: value.provider, model: value.model }
+    : undefined
+}
+
+/** Parse one selector value produced by {@link visualRouteValue}. */
+function parseVisualRoute(value: string): { provider: string; model: string } | undefined {
+  if (value === '') return undefined
+  const parsed: unknown = JSON.parse(value)
+  if (!Array.isArray(parsed) || parsed.length !== 2
+    || typeof parsed[0] !== 'string' || typeof parsed[1] !== 'string') {
+    throw new Error('invalid visual model selection')
+  }
+  return { provider: parsed[0], model: parsed[1] }
+}
+
+/** Save or clear only the visual-route fields, preserving deployment limits. */
+export async function saveVisualModel(
+  api: Pick<IApiClient, 'settings'>,
+  namespace: SettingsNamespaceView,
+  route: { provider: string; model: string } | undefined,
+): Promise<string | undefined> {
+  try {
+    const response = await api.settings.mutate({
+      ns: IMAGE_ANALYSIS_NAMESPACE,
+      ops: route === undefined
+        ? [
+          { op: 'unset' as const, path: ['provider'] },
+          { op: 'unset' as const, path: ['model'] },
+        ]
+        : [
+          { op: 'set' as const, path: ['provider'], value: route.provider },
+          { op: 'set' as const, path: ['model'], value: route.model },
+        ],
+      expectedRevision: namespace.revision,
+    })
+    if (!response.result.ok) return response.result.error.code === 'settings-conflict'
+      ? 'settings-conflict'
+      : response.result.error.message
+  } catch (error) {
+    return messageOf(error)
+  }
+  return undefined
+}
+
+/** DeepSeek image-understanding enhancement with revision-checked persistence. */
+function DeepSeekImageEnhancement({
+  state,
+  controller,
+  api,
+  t,
+  deepSeekName,
+}: ModelsSectionInjected & { state: ModelsSettingsState; deepSeekName: string }): ReactNode {
+  const namespace = state.namespaces.get(IMAGE_ANALYSIS_NAMESPACE)
+  const committedValue = visualRouteValue(visualRouteOf(namespace))
+  const [value, setValue] = useState(committedValue)
+  const [expanded, setExpanded] = useState(committedValue !== '')
+  const [saving, setSaving] = useState(false)
+  const [failure, setFailure] = useState<string | undefined>(undefined)
+  const [saved, setSaved] = useState(false)
+  const selectId = useId()
+  useEffect(() => {
+    if (saving) return
+    setValue(committedValue)
+    setExpanded(committedValue !== '')
+  }, [committedValue, saving])
+  if (namespace === undefined) return null
+  const options = visualModelOptions(state.modelGroups)
+  const providers = [...new Map(options.map(option => [option.provider, option.providerName])).entries()]
+  const configuredRoute = visualRouteOf(namespace)
+  const configuredAvailable = configuredRoute === undefined || options.some(option =>
+    option.provider === configuredRoute.provider && option.model === configuredRoute.model)
+
+  const persist = (
+    nextValue: string,
+    route: { provider: string; model: string } | undefined,
+  ): void => {
+    setValue(nextValue)
+    setSaving(true)
+    setFailure(undefined)
+    setSaved(false)
+    void saveVisualModel(api, namespace, route)
+      .then(async (error) => {
+        if (error !== undefined) {
+          setFailure(error === 'settings-conflict' ? t('conflict') : error)
+          setValue(committedValue)
+          setExpanded(route !== undefined || committedValue !== '')
+          return
+        }
+        await controller.load()
+        setSaved(true)
+      })
+      .finally(() => { setSaving(false) })
+  }
+
+  const select = (nextValue: string): void => {
+    let route: { provider: string; model: string } | undefined
+    try {
+      route = parseVisualRoute(nextValue)
+    } catch (error) {
+      setFailure(messageOf(error))
+      setValue(committedValue)
+      return
+    }
+    /* v8 ignore next -- the disabled placeholder is the only route-less option */
+    if (route === undefined) return
+    persist(nextValue, route)
+  }
+
+  const toggle = (): void => {
+    setFailure(undefined)
+    setSaved(false)
+    if (!expanded) {
+      setExpanded(true)
+      return
+    }
+    setExpanded(false)
+    if (committedValue === '') {
+      setValue('')
+      return
+    }
+    persist('', undefined)
+  }
+
+  return (
+    <div className={styles['imageEnhancement']}>
+      <div className={styles['enhancementHead']}>
+        <span className={styles['enhancementCopy']}>
+          <span className={styles['enhancementTitle']}>{t('imageUnderstanding')}</span>
+          <span className={styles['enhancementDescription']}>{t('imageUnderstandingDescription')}</span>
+        </span>
+        <button
+          type="button"
+          className={styles['switch']}
+          role="switch"
+          aria-label={t('imageUnderstanding')}
+          aria-checked={expanded}
+          disabled={!state.writable || state.status !== 'ready' || saving}
+          onClick={toggle}
+        >
+          <span className={styles['switchThumb']} aria-hidden="true" />
+        </button>
+      </div>
+      {expanded
+        ? (
+          <div className={styles['enhancementBody']}>
+            <label className={styles['fieldLabel']} htmlFor={selectId}>{t('visionModel')}</label>
+            <div className={styles['visionFlow']}>
+              <span className={styles['flowEndpoint']}>{t('images')}</span>
+              <span className={styles['flowArrow']} aria-hidden="true">&#8594;</span>
+              <select
+                id={selectId}
+                className={`${styles['input']} ${styles['selectInput']} ${styles['visionSelect']}`}
+                value={value}
+                disabled={!state.writable || state.status !== 'ready' || saving || options.length === 0}
+                onChange={(event) => { select(event.target.value) }}
+              >
+                <option value="" disabled>{t('visionModelChoose')}</option>
+                {!configuredAvailable
+                  ? (
+                    <option value={committedValue} disabled>
+                      {t('visionModelUnavailable')}: {configuredRoute.provider} / {configuredRoute.model}
+                    </option>
+                  )
+                  : null}
+                {providers.map(([provider, providerName]) => (
+                  <optgroup key={provider} label={providerName}>
+                    {options.filter(option => option.provider === provider).map(option => (
+                      <option key={visualRouteValue(option)} value={visualRouteValue(option)}>
+                        {option.modelName === option.model ? option.model : `${option.modelName} (${option.model})`}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <span className={styles['flowArrow']} aria-hidden="true">&#8594;</span>
+              <span className={styles['flowEndpoint']}>{deepSeekName}</span>
+            </div>
+            {value === ''
+              ? (
+                <p className={styles['fieldStatus']}>
+                  {options.length === 0 ? t('visionModelEmpty') : t('visionEnhancementPending')}
+                </p>
+              )
+              : null}
+          </div>
+        )
+        : null}
+      {saving ? <p className={styles['fieldStatus']} role="status">{t('visionEnhancementSaving')}</p> : null}
+      {saved && !saving ? <p className={styles['savedNotice']} role="status">{t('visionEnhancementSaved')}</p> : null}
+      {failure === undefined ? null : <p className={styles['error']}>{failure}</p>}
+      {expanded && state.modelFailures.length > 0
+        ? <p className={styles['notice']}>{t('visionCatalogPartial')}</p>
+        : null}
+    </div>
+  )
 }
 
 /** One existing row or dormant directory entry addressed by an editor action. */
@@ -289,6 +515,8 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
           const namespace = state.namespaces.get(target.settingsNs)
           /* v8 ignore next -- the join marks a row configured only when its namespace resolved */
           if (namespace === undefined) return null
+          const isDeepSeek = row.entry.provider === 'deepseek-official'
+            && row.entry.settingsNs === 'llm-deepseek'
           if (needsSetup(row, anyUsable) && !dismissedSetup.has(row.entry.provider)) {
             // First-run posture: the provider exists but has no key — the
             // setup card IS its presence on the page, until the user closes it.
@@ -302,6 +530,18 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                   readOnly: !state.writable,
                   onClose: (changed) => { closeSetup(changed, target) },
                 })}
+                {isDeepSeek
+                  ? (
+                    <DeepSeekImageEnhancement
+                      state={state}
+                      controller={controller}
+                      useSnapshot={injected.useSnapshot}
+                      api={api}
+                      t={t}
+                      deepSeekName={row.entry.displayName}
+                    />
+                  )
+                  : null}
               </li>
             )
           }
@@ -313,33 +553,38 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
           return (
             <li key={row.entry.provider} className={styles['rowCard']}>
               <div className={styles['rowHead']}>
-                <span className={styles['rowIdentity']}>
-                  <span className={styles['rowName']}>{row.entry.displayName}</span>
-                  {/* Only the adapter can tell a hand-declared route from a
-                      shipped one it also has a stored profile for, so the tag
-                      follows its answer and stays off when it gives none. */}
-                  {row.entry.declared === true
-                    ? <span className={styles['rowTag']}>{t('customTag')}</span>
-                    : null}
-                  {credentialConfigured
-                    ? (
-                      <span
-                        className={`${styles['credentialDot']} ${styles['credentialDotConfigured']}`}
-                        role="img"
-                        aria-label={t('credentialConfigured')}
-                        title={t('credentialConfigured')}
-                      />
-                    )
-                    : credentialMissing
+                <span className={styles['rowMain']}>
+                  <span className={styles['rowIdentity']}>
+                    <span className={styles['rowName']}>{row.entry.displayName}</span>
+                    {/* Only the adapter can tell a hand-declared route from a
+                        shipped one it also has a stored profile for, so the tag
+                        follows its answer and stays off when it gives none. */}
+                    {row.entry.declared === true
+                      ? <span className={styles['rowTag']}>{t('customTag')}</span>
+                      : null}
+                    {credentialConfigured
                       ? (
                         <span
-                          className={`${styles['credentialDot']} ${styles['credentialDotMissing']}`}
+                          className={`${styles['credentialDot']} ${styles['credentialDotConfigured']}`}
                           role="img"
-                          aria-label={t('credentialMissing')}
-                          title={t('credentialMissing')}
+                          aria-label={t('credentialConfigured')}
+                          title={t('credentialConfigured')}
                         />
                       )
-                      : null}
+                      : credentialMissing
+                        ? (
+                          <span
+                            className={`${styles['credentialDot']} ${styles['credentialDotMissing']}`}
+                            role="img"
+                            aria-label={t('credentialMissing')}
+                            title={t('credentialMissing')}
+                          />
+                        )
+                        : null}
+                  </span>
+                  {isDeepSeek
+                    ? <span className={styles['primaryDescription']}>{t('deepSeekPrimary')}</span>
+                    : null}
                 </span>
                 <span className={styles['rowActions']}>
                   <button
@@ -377,6 +622,18 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                     : null}
                 </span>
               </div>
+              {isDeepSeek
+                ? (
+                  <DeepSeekImageEnhancement
+                    state={state}
+                    controller={controller}
+                    useSnapshot={injected.useSnapshot}
+                    api={api}
+                    t={t}
+                    deepSeekName={row.entry.displayName}
+                  />
+                )
+                : null}
               {open
                 ? renderProviderEditor({
                   target,

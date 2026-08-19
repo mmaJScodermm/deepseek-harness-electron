@@ -14,7 +14,7 @@ Each live Web agent has one private promise chain shared by image-bearing prompt
 
 The pending-publication set records a queued occurrence at dequeue and a steering occurrence already at enqueue (steering items never enter the queued UI mirror), and retains each until its matching `user/message` or `steering/message` event publishes. If admission ends without publishing, the transition to idle retires the entries; inbox discard retires the listed work, and session disposal retires every remaining entry. Model selection checks that set, the queued UI mirror, and `Session.deriveMessages()`, which is the current model-visible history after compaction.
 
-Provider adapters remain the final enforcement boundary. The host ordering only prevents its mutable route and pending image state from contradicting each other before request assembly.
+The Host evaluates effective image capability: either the selected conversation route explicitly accepts images or [a configured visual preprocessing route](../feature/2026-08-19-optional-vision-model-preprocessing.md) explicitly does. A text-only conversation selection remains valid for current or pending images only in the second case. Provider adapters and the preprocessing plugin retain final enforcement; the Host ordering prevents its mutable routes and pending image state from contradicting each other before request assembly.
 
 ## Alternatives considered
 
@@ -26,4 +26,4 @@ Provider adapters remain the final enforcement boundary. The host ordering only 
 
 ## Consequences
 
-An image prompt and a concurrent model selection have deterministic order, and a text-only target cannot strand an image that has been admitted but not yet published. Selection may wait for an in-flight image admission, while unrelated prompts retain their existing concurrency. Compaction can make a text-only target valid once no pending or derived image remains.
+An image prompt and a concurrent model selection have deterministic order, and a route change cannot strand an image that has been admitted but not yet published. Selection may wait for an in-flight image admission, while unrelated prompts retain their existing concurrency. A configured visual route permits DeepSeek or another text-only conversation target to remain selected; without one, compaction can make that target valid only after no pending or derived image remains.

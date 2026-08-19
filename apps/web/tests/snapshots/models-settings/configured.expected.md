@@ -20,6 +20,9 @@
   - heading "模型" [level=2]
   - paragraph: 填入各提供方的 API 密钥即可使用其模型。
   - status: 已保存 minimax-cn。
+  - text: 视觉模型
+  - combobox "视觉模型":
+    - option "未配置" [selected]
   - list:
     - listitem:
       - text: minimax-cn

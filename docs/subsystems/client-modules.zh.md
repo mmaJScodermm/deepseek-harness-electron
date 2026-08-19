@@ -74,7 +74,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.clientModules` — `ClientModuleRegistry`
 
-The client plugin table service: incremental `dsh.client` scan and wire composition, plus a bundle route and index tap when an HTTP carrier exists. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).
+The client plugin table service: incremental `dsh.client` scan and wire composition, plus a bundle route and index tap whenever an HTTP carrier joins the composition. The HTTP effects wait through Cordis injection, so their registration does not depend on service activation order and the registry remains usable without them in Electron. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).
 
 ```ts cordis-catalog
 /**
@@ -114,5 +114,5 @@ onRebuilt(listener: (id: string, rev: string) => void): () => void
 onGraphChanged(listener: () => void): () => void
 ```
 
-Source: [`packages/client/modules/src/index.ts:185`](../../packages/client/modules/src/index.ts)
+Source: [`packages/client/modules/src/index.ts:188`](../../packages/client/modules/src/index.ts)
 <!-- END GENERATED cordis-surface -->

@@ -1,0 +1,20 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "A screenshot shows a red error banner reading \"TypeError: handler is not a function\" above a file named app.ts." },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "A screenshot shows a red error banner reading \"TypeError: handler is not a function\" above a file named app.ts." } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "DeepSeek received the vision description. Check where app.ts assigns or calls handler, then verify that value is a function." },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "DeepSeek received the vision description. Check where app.ts assigns or calls handler, then verify that value is a function." } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]

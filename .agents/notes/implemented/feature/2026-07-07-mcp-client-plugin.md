@@ -143,7 +143,7 @@ A unified `execute` handler for all tools from one MCP server:
 1. Resolve `rawName` (the executor closes over it) and call `client.callTool({ name: rawName, arguments }, { signal: exec.signal })` with the configured timeout — the public name is never sent to the server.
 2. Map the result:
    - Multiple `text` content blocks → join with `'\n'` into a single `TextBlock` (required: `flattenText` uses `join('')` without separator, so multiple blocks would lose inter-block boundaries).
-   - `image` content blocks → discard with a `ctx.logger.warn` (the harness has no image content block type; [drop-image Agent Note](../simplification/2026-07-04-drop-image-content-block.md)).
+   - `image` content blocks → preserve surrounding text and emit an explicit model-facing marker such as `[image: image/png, content discarded]`; the raw MCP result remains available as the tool value, but MCP bytes are not promoted into a durable harness `ImageBlock`.
    - `isError: true` → map to the harness `isError` result path (`{ content: [...], isError: true }`).
 3. Cancellation: `exec.signal` (from the agent loop's cancel) is passed through to the MCP SDK's `callTool`, which sends `$/cancelRequest` to the server.
 

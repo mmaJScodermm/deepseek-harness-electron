@@ -58,6 +58,11 @@
     },
     {
       "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "ImageAnalysisRoute",
+      "source": "packages/llm/llm-image-analysis/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
       "symbol": "LlmModelDiscoveryRequest",
       "source": "packages/llm/llm/src/types.ts"
     },

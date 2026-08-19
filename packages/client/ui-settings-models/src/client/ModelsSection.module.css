@@ -45,6 +45,121 @@
   color: var(--dsw-alias-state-success-primary);
 }
 
+.imageEnhancement {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.enhancementHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.enhancementCopy,
+.rowMain {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.enhancementCopy {
+  gap: 2px;
+}
+
+.enhancementTitle {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.enhancementDescription,
+.primaryDescription {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.switch {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--dsw-alias-border-l2);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.switch[aria-checked='true'] {
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.switchThumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-1);
+  transition: transform 120ms ease;
+}
+
+.switch[aria-checked='true'] .switchThumb {
+  transform: translateX(16px);
+}
+
+.enhancementBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.visionFlow {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 240px) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.flowEndpoint {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+
+.flowArrow {
+  color: var(--dsw-alias-label-dimmed);
+  font-size: 14px;
+  line-height: 18px;
+}
+
+select.visionSelect {
+  max-width: none;
+}
+
+.fieldStatus {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .rows {
   list-style: none;
   /* Extra air between the title/intro block and the first provider card. */
@@ -68,7 +183,7 @@
 
 .rowHead {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
 }
 
@@ -218,6 +333,7 @@
 .linkButton:focus-visible,
 .addModelButton:focus-visible,
 .iconButton:focus-visible,
+.switch:focus-visible,
 .customizedSummary:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--dsw-alias-border-l3);
@@ -628,7 +744,9 @@ select.input {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .customizedSummary::before {
+  .customizedSummary::before,
+  .switch,
+  .switchThumb {
     transition: none;
   }
 }

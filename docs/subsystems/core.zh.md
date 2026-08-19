@@ -238,7 +238,7 @@ type PreStepDecision =
 type RequestErrorAction = { kind: 'retry' } | undefined
 ```
 
-`agent/pre-step` 是请求推导前唯一的串行监听器链。`agent/turn-stopping` 在轮次没有工具或 steering（中途引导）后续时运行，先于最后一次 steering 排空。
+`agent/pre-step` 是步骤打开前的准入 waterfall。进入步骤的消息追加完成后，串行 `agent/step-input-logged` 会在请求派生前收到这些确切的 `user/message` 事件；监听器必须在返回前追加每条面向模型的 surface 替代消息，失败则阻止对话请求。`agent/turn-stopping` 在轮次没有工具或 steering（中途引导）后续时运行，先于最后一次 steering 排空。
 
 `agent/session-start` 携带 `SessionStartSource`（会话生命周期为何开始；桥接层据此匹配其 SessionStart）：
 
@@ -802,7 +802,7 @@ A step or turn errored. The machine reports a failure here even when the error h
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/agent/src/runtime-types.ts:290`](../../packages/core/agent/src/runtime-types.ts)
+Source: [`packages/core/agent/src/runtime-types.ts:304`](../../packages/core/agent/src/runtime-types.ts)
 
 <a id="agentinboxclaimed--emit"></a>
 
@@ -919,7 +919,7 @@ Replace the frozen call configuration. `await next()` yields the config the mach
 
 Types: [LlmCallConfig](llm-streaming.md) · [Scoped](scope.md)
 
-Source: [`packages/core/agent/src/runtime-types.ts:244`](../../packages/core/agent/src/runtime-types.ts)
+Source: [`packages/core/agent/src/runtime-types.ts:258`](../../packages/core/agent/src/runtime-types.ts)
 
 <a id="agentrequest-error--waterfall"></a>
 
@@ -948,7 +948,7 @@ Handle one failed model-request attempt before the loop retries or closes its st
 
 Types: [LlmFailure](llm-streaming.md) · [ResolvedRetryPolicy](llm-streaming.md) · [Scoped](scope.md)
 
-Source: [`packages/core/agent/src/runtime-types.ts:260`](../../packages/core/agent/src/runtime-types.ts)
+Source: [`packages/core/agent/src/runtime-types.ts:274`](../../packages/core/agent/src/runtime-types.ts)
 
 <a id="agentsession-start--emit"></a>
 
@@ -997,6 +997,33 @@ Types: [Scoped](scope.md)
 
 Source: [`packages/core/agent/src/runtime-types.ts:178`](../../packages/core/agent/src/runtime-types.ts)
 
+<a id="agentstep-input-logged--serial"></a>
+
+#### `agent/step-input-logged` — serial
+
+User messages for one entered step are durable and may be replaced on the model-visible session surface before the conversation request is derived. Listeners append every model-visible replacement before they return; rejection closes the step without dispatching the main model.
+
+```ts cordis-catalog
+/**
+ * User messages for one entered step are durable and may be replaced on
+ * the model-visible session surface before the conversation request is
+ * derived. Listeners append every model-visible replacement before they
+ * return; rejection closes the step without dispatching the main model.
+ * @param payload.agent - the agent whose step input was logged.
+ * @param payload.events - exact `user/message` events appended for this step, possibly empty.
+ * @param payload.turn - the open turn number.
+ * @param payload.step - the entered step number.
+ * @param payload.signal - the current turn's explicit abort signal.
+ * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+ * @mode serial
+ */
+'agent/step-input-logged'(this: Scoped<Agent>, payload: { agent: Agent; events: SessionEvent<'user/message'>[]; turn: number; step: number; signal: AbortSignal }): Promise<void> | void
+```
+
+Types: [Scoped](scope.md) · [SessionEvent](session.md)
+
+Source: [`packages/core/agent/src/runtime-types.ts:245`](../../packages/core/agent/src/runtime-types.ts)
+
 <a id="agentturn-stopping--serial"></a>
 
 #### `agent/turn-stopping` — serial
@@ -1026,7 +1053,7 @@ The turn is about to close: the model owes no response (no live tool calls, no f
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/agent/src/runtime-types.ts:278`](../../packages/core/agent/src/runtime-types.ts)
+Source: [`packages/core/agent/src/runtime-types.ts:292`](../../packages/core/agent/src/runtime-types.ts)
 
 <a id="agent-loop-events"></a>
 

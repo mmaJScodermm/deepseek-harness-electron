@@ -12,9 +12,10 @@ import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatu
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { contentHasImage, createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { contentHasImage, createUserMessage, freezeMessage, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
+import { IMAGE_ANALYSIS_SETTINGS_NAMESPACE } from '@deepseek-ai/dsh-llm-image-analysis'
 import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
 import type { JsonValue, Session, SessionEvent, SessionEventMap, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
@@ -253,7 +254,11 @@ function referencedImage(events: readonly SessionEvent[], attachmentId: string):
  * that choice write it through `settings.update`, so it has to cross the
  * configuration boundary or the pickers silently fail to persist.
  */
-const PRODUCT_SETTINGS_NAMESPACES = new Set(['ui-onboarding', AGENT_PRESET_SETTINGS_NAMESPACE])
+const PRODUCT_SETTINGS_NAMESPACES = new Set([
+  'ui-onboarding',
+  AGENT_PRESET_SETTINGS_NAMESPACE,
+  IMAGE_ANALYSIS_SETTINGS_NAMESPACE,
+])
 
 /** Strict browser-zone profile: UTC or an IANA Area/Location-style identifier. */
 const IANA_TIME_ZONE = /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$/
@@ -352,6 +357,9 @@ async function buildModelCatalog(ctx: Context): Promise<{
           id: model.id,
           name: model.name,
           ...model.description === undefined ? {} : { description: model.description },
+          ...resolved.inputModalities === undefined
+            ? {}
+            : { inputModalities: [...resolved.inputModalities] },
           ...reasoning === undefined ? {} : { reasoning },
         }
       }))
@@ -2296,10 +2304,16 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               .some(message => contentHasImage(message.content))
             if (pendingImage || messagesHaveImage(found.agent.session.deriveMessages())) {
               const info = await ctx.llm.resolveModelInfo(resolved.provider, resolved.model)
-              if (info.inputModalities !== undefined && !info.inputModalities.includes('image')) {
+              const imageAnalysisRoute = info.inputModalities !== undefined
+                && !info.inputModalities.includes('image')
+                ? await ctx.get('imageAnalysis')?.resolveConfiguredRoute()
+                : undefined
+              if (info.inputModalities !== undefined
+                && !info.inputModalities.includes('image')
+                && imageAnalysisRoute === undefined) {
                 return err(request, {
                   code: 'model-unavailable',
-                  message: `Model "${resolved.model}" does not accept image input, but this session already contains images; select an image-capable model.`,
+                  message: `Model "${resolved.model}" does not accept image input, but this session already contains images; select an image-capable model or configure a vision model.`,
                   details: { provider, model },
                 })
               }
@@ -2486,11 +2500,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               const current = selectionFor(agent).current
               const modelInfo = await ctx.llm.resolveModelInfo(current.provider, current.model)
               if (modelInfo.inputModalities !== undefined && !modelInfo.inputModalities.includes('image')) {
-                return err(request, {
-                  code: 'attachment-error',
-                  message: `Model "${current.model}" does not support image input.`,
-                  details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
-                })
+                const imageAnalysisRoute = await ctx.get('imageAnalysis')?.resolveConfiguredRoute()
+                if (imageAnalysisRoute === undefined) {
+                  return err(request, {
+                    code: 'attachment-error',
+                    message: `Model "${current.model}" does not support image input. Configure an image-capable vision model in Models settings.`,
+                    details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
+                  })
+                }
               }
             }
             const durable = await durablePromptContent(ctx, content)
@@ -2502,6 +2519,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               return err(request, {
                 code: 'attachment-error',
                 message: error.message,
+                details: { reason: error.code },
+              })
+            }
+            if (hasImage && error instanceof LlmError) {
+              return err(request, {
+                code: 'attachment-error',
+                message: `Configured vision model is unavailable: ${error.message}`,
                 details: { reason: error.code },
               })
             }

@@ -891,6 +891,28 @@ export interface DeepSeekCatalogModel {
 
 来源：[`packages/llm/llm-deepseek/src/index.ts:62`](../packages/llm/llm-deepseek/src/index.ts)
 
+<a id="deepseek-aidsh-llm-image-analysis"></a>
+
+## `@deepseek-ai/dsh-llm-image-analysis`
+
+需要：`llm`
+
+```ts config-catalog
+/** Live settings for optional image analysis. */
+export interface Config {
+  /** Registered provider route; supplied together with `model`. */
+  readonly provider?: string
+  /** Provider-owned vision model id; supplied together with `provider`. */
+  readonly model?: string
+  /** Maximum output tokens for one image description. */
+  readonly maxOutputTokens: number
+  /** End-to-end image-analysis deadline in milliseconds. */
+  readonly timeoutMs: number
+}
+```
+
+来源：[`packages/llm/llm-image-analysis/src/index.ts:52`](../packages/llm/llm-image-analysis/src/index.ts)
+
 <a id="deepseek-aidsh-llm-pi-ai"></a>
 
 ## `@deepseek-ai/dsh-llm-pi-ai`

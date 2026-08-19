@@ -10,7 +10,7 @@ The harness needs one internal language for messages that the loop, session log,
 
 ## Decision
 
-Own the vocabulary: messages are arrays of typed content blocks (`text`, `reasoning`, `tool-call`, `tool-result`), with the union derived from the merge-extensible `ContentBlockMap` so plugins add block types via declaration merging. The same merge-extensible-map pattern types every "stringly" field (`MessageSource`, `FinishReason`, `TurnTrigger`, `TurnEndReason`). Streaming is a raw chunk protocol; `BlockAssembler` is the single shared assembly implementation. Adapters translate to provider wire formats — mapping cost lives in adapters, where it belongs.
+Own the vocabulary: messages are arrays of typed content blocks (`text`, `reasoning`, `image`, `tool-call`, `tool-result`), with the union derived from the merge-extensible `ContentBlockMap` so plugins add block types via declaration merging. An `image` block references one durable attachment rather than carrying provider bytes or a transient URL. The same merge-extensible-map pattern types every "stringly" field (`MessageSource`, `FinishReason`, `TurnTrigger`, `TurnEndReason`). Streaming is a raw chunk protocol; `BlockAssembler` is the single shared assembly implementation. Adapters translate to provider wire formats — mapping cost lives in adapters, where it belongs.
 
 In-session context injection (`context/message`) and mid-turn steering originally rendered as tagged user-role envelopes (the system-reminder pattern) rather than a new role, so adapters carry zero burden. Both now project as plain user content with no wrapper; see [the injected-content-envelope Agent Note](../simplification/2026-07-20-unwrap-injected-content-envelopes.md). Live-adapter validation confirms this rendering for current DeepSeek behavior; a future provider-specific mismatch belongs in that adapter rather than a new canonical role.
 
@@ -22,7 +22,7 @@ In-session context injection (`context/message`) and mid-turn steering originall
 ## Consequences
 
 - Reasoning has a core home without provider-specific shapes.
-- Multimodal blocks return only with coordinated adapter, UI, and compaction support; see [the drop-image Agent Note](../simplification/2026-07-04-drop-image-content-block.md).
+- Image blocks have coordinated durable storage, adapter, UI, compaction, and replay support; a text-only conversation route can consume their logged descriptions through [optional vision-model preprocessing](../feature/2026-08-19-optional-vision-model-preprocessing.md).
 - Cache hints and assistant prefill remain absent until a shipping adapter can honor them; see the [producer-less variants](../../archived/simplification/2026-07-04-prune-producerless-vocabulary-variants.md) and [inert request knobs](../../archived/simplification/2026-07-04-drop-inert-request-knobs.md) Agent Notes.
 - Every adapter pays a translation cost; the first real adapters have since validated the streaming protocol, and new adapters should continue proving their provider-specific mapping in adapter-local tests.
 - IDs that cross package boundaries are branded (`CallId`, the shared agent/session `SessionId`) — nominal typing at zero runtime cost.

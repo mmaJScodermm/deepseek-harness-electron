@@ -380,8 +380,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'clientModules',
-    summary: 'The client plugin table service: incremental `dsh.client` scan and wire composition, plus a bundle route and index tap when an HTTP carrier exists.',
-    description: 'The client plugin table service: incremental `dsh.client` scan and wire composition, plus a bundle route and index tap when an HTTP carrier exists. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).',
+    summary: 'The client plugin table service: incremental `dsh.client` scan and wire composition, plus a bundle route and index tap whenever an HTTP carrier joins the composition.',
+    description: 'The client plugin table service: incremental `dsh.client` scan and wire composition, plus a bundle route and index tap whenever an HTTP carrier joins the composition. The HTTP effects wait through Cordis injection, so their registration does not depend on service activation order and the registry remains usable without them in Electron. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).',
     methods: [
       {
         signature: 'graph(): WebBootGraph',
@@ -706,6 +706,25 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Create one Goal through the remote boundary.',
         parameters: [{ name: 'agent', description: 'exact live Agent resolved from the wire identity.' }, { name: 'request', description: 'objective and optional round cap.' }],
         returns: 'the created Goal identity.',
+      },
+    ],
+  },
+  {
+    key: 'imageAnalysis',
+    summary: 'Owns the optional visual route and converts image-bearing surface messages before the main conversation request is derived.',
+    description: 'Owns the optional visual route and converts image-bearing surface messages before the main conversation request is derived.',
+    methods: [
+      {
+        signature: 'currentRoute(): ImageAnalysisRoute | undefined',
+        description: 'Read the configured route without model lookup.',
+        parameters: [],
+        returns: 'a detached route, or undefined while visual preprocessing is disabled.',
+      },
+      {
+        signature: 'async resolveConfiguredRoute(signal?: AbortSignal): Promise<ImageAnalysisRoute | undefined>',
+        description: 'Resolve the current route and require explicit image-input capability.',
+        parameters: [{ name: 'signal', description: 'optional caller cancellation for adapter-owned lookup.' }],
+        returns: 'the usable route, or undefined while visual preprocessing is disabled.',
       },
     ],
   },
@@ -2262,6 +2281,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'payload', description: '.status - the status just entered (the transition\'s destination). Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.' }],
   },
   {
+    name: 'agent/step-input-logged',
+    mode: 'serial',
+    signature: '\'agent/step-input-logged\'(this: Scoped<Agent>, payload: { agent: Agent; events: SessionEvent<\'user/message\'>[]; turn: number; step: number; signal: AbortSignal }): Promise<void> | void',
+    summary: 'User messages for one entered step are durable and may be replaced on the model-visible session surface before the conversation request is derived.',
+    description: 'User messages for one entered step are durable and may be replaced on the model-visible session surface before the conversation request is derived. Listeners append every model-visible replacement before they return; rejection closes the step without dispatching the main model.',
+    parameters: [{ name: 'payload', description: '.signal - the current turn\'s explicit abort signal. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.' }],
+  },
+  {
     name: 'agent/turn-stopping',
     mode: 'serial',
     signature: '\'agent/turn-stopping\'(this: Scoped<Agent>, payload: { agent: Agent; turn: number; signal: AbortSignal }): Promise<void> | void',
@@ -3091,7 +3118,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: Message[];\n    system?: string;\n    tools?: ToolSchema[];\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: Message[];\n    system?: string;\n    tools?: ToolSchema[];\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\' | \'image-analysis\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -3128,6 +3155,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'GoalView',
     declaration: 'export interface GoalView extends GoalSnapshot {\n    readonly roundsStarted: number;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly activation: GoalActivation;\n}',
+  },
+  {
+    name: 'ImageAnalysisRoute',
+    declaration: 'export interface ImageAnalysisRoute {\n    readonly provider: string;\n    readonly model: string;\n}',
   },
   {
     name: 'ImageAttachmentLimits',
@@ -3483,7 +3514,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PreparedLlmCall',
-    declaration: 'export interface PreparedLlmCall {\n    readonly config: LlmCallConfig;\n    readonly retryPolicy: ResolvedRetryPolicy;\n    readonly context?: LlmModelContext;\n    readonly adapterDefaults: LlmCallConfigAdapterDefaults;\n    stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
+    declaration: 'export interface PreparedLlmCall {\n    readonly config: LlmCallConfig;\n    readonly inputModalities?: readonly ModelModality[];\n    readonly retryPolicy: ResolvedRetryPolicy;\n    readonly context?: LlmModelContext;\n    readonly adapterDefaults: LlmCallConfigAdapterDefaults;\n    stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
   },
   {
     name: 'PreparedReferencedMessage',

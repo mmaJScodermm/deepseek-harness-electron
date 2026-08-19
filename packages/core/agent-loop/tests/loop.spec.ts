@@ -910,6 +910,72 @@ describe('agent loop', () => {
     expect(adapter.requests).toHaveLength(1)
   })
 
+  it('agent/step-input-logged observes persisted input before each model request', async () => {
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'echo', {}),
+      textResponse('done'),
+    ])
+    const ctx = await harness(adapter)
+    ctx.tools.register(defineContentToolFixture({
+      name: 'echo', description: 'echo', parameters: {},
+      async execute() { return [{ type: 'text', text: 'echoed' }] },
+    }))
+    const agent = ctx.agentLoop.create(SessionId('step-input-logged'), {
+      provider: 'mock',
+      model: 'mock',
+    })
+    const observed: { turn: number; step: number; seqs: number[] }[] = []
+    ctx.on('agent/step-input-logged', ({ agent: subject, events, turn, step }) => {
+      if (subject !== agent) return
+      expect(events.every(event => subject.session.events[event.seq] === event)).toBe(true)
+      observed.push({ turn, step, seqs: events.map(event => event.seq) })
+    })
+
+    send(agent, 'inspect this')
+    await waitForIdle(ctx, agent)
+
+    const prompt = agent.session.events.find(event => event.type === 'user/message')
+    expect(prompt).toBeDefined()
+    expect(observed).toEqual([
+      { turn: 1, step: 1, seqs: [prompt!.seq] },
+      { turn: 1, step: 2, seqs: [] },
+    ])
+    expect(adapter.requests).toHaveLength(2)
+  })
+
+  it('a throwing agent/step-input-logged listener closes the step before model dispatch', async () => {
+    const adapter = new MockAdapter([])
+    const ctx = await harness(adapter)
+    const agent = ctx.agentLoop.create(SessionId('step-input-logged-failure'), {
+      provider: 'mock',
+      model: 'mock',
+    })
+    const errors: Error[] = []
+    ctx.on('agent/step-input-logged', ({ agent: subject, events }) => {
+      if (subject !== agent) return
+      expect(events).toHaveLength(1)
+      expect(subject.session.events[events[0]!.seq]).toBe(events[0])
+      throw new Error('input preprocessing failed')
+    })
+    ctx.on('agent/error', ({ agent: subject, error }) => {
+      if (subject === agent && error instanceof Error) errors.push(error)
+    })
+
+    send(agent, 'persist before preprocessing')
+    await waitForIdle(ctx, agent)
+
+    expect(adapter.requests).toEqual([])
+    expect(userTexts(agent)).toEqual(['persist before preprocessing'])
+    expect(errors.map(error => error.message)).toEqual(['input preprocessing failed'])
+    expect(agent.session.events.filter(event => event.type === 'step/start')).toHaveLength(1)
+    expect(agent.session.events.filter(event => event.type === 'step/end')).toHaveLength(1)
+    const turnEnd = agent.session.events.find(event => event.type === 'turn/end')
+    expect(turnEnd?.type === 'turn/end' && turnEnd.data.reason).toMatchObject({
+      kind: 'error',
+      error: { code: 'UNKNOWN', message: 'input preprocessing failed' },
+    })
+  })
+
   it('a throwing agent/pre-step listener fails the proposal, not the loop', async () => {
     const adapter = new MockAdapter([textResponse('second turn ok')])
     const ctx = await harness(adapter)

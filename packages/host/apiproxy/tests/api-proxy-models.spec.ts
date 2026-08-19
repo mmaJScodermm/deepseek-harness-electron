@@ -15,6 +15,7 @@ import type {
   LlmResolvedModelInfo, StreamChunk,
   UserMessage,
 } from '@deepseek-ai/dsh-llm'
+import ImageAnalysis from '@deepseek-ai/dsh-llm-image-analysis'
 import SessionStore from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -128,6 +129,39 @@ function registerTextOnly(ctx: Context): void {
   }('Text Only', []))
 }
 
+function registerVision(
+  ctx: Context,
+  inputModalities: NonNullable<LlmResolvedModelInfo['inputModalities']> = ['text', 'image'],
+): void {
+  ctx.llm.registerAdapter(['qwen'], new class extends CatalogAdapter {
+    override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+      return Promise.resolve({ provider, id: model, name: model, inputModalities })
+    }
+  }('Qwen', [
+    { provider: 'qwen', id: 'qwen-vl', name: 'Qwen VL' },
+  ]))
+}
+
+function provideImageStore(ctx: Context): void {
+  ctx.provide('attachments', {
+    imageLimits: {
+      maxImageBytes: 4,
+      maxImagesPerMessage: 2,
+      maxMessageImageBytes: 4,
+      maxImagePixels: 4,
+      mediaTypes: ['image/png'],
+    },
+    validateImage: () => Promise.resolve(),
+    saveImage: (input: { data: Uint8Array; mediaType: 'image/png' }) => Promise.resolve({
+      attachmentId: 'att-vision',
+      mediaType: input.mediaType,
+      bytes: input.data.byteLength,
+      width: 1,
+      height: 1,
+    }),
+  } as never)
+}
+
 describe('Web session model selection', () => {
   it('validates an ordered image batch before persisting any member', async () => {
     const { ctx, agent, sessionId } = await harness()
@@ -231,6 +265,108 @@ describe('Web session model selection', () => {
     expect(expectValue(await api.sessions.selectModel(request({
       sessionId, provider: 'text-only', model: 'plain',
     }))).selected).toEqual({ provider: 'text-only', model: 'plain' })
+    await ctx.fiber.dispose()
+  })
+
+  it('admits images to a text-only conversation through an explicit vision route', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    registerTextOnly(ctx)
+    registerVision(ctx)
+    await ctx.plugin(ImageAnalysis, {
+      provider: 'qwen',
+      model: 'qwen-vl',
+      maxOutputTokens: 512,
+      timeoutMs: 1_000,
+    })
+    provideImageStore(ctx)
+    const followup = vi.fn()
+    Object.assign(agent, { followup })
+    const api = createApiProxy(ctx, {
+      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      cwd: '/tmp',
+    })
+    const image = {
+      type: 'image' as const,
+      attachment: {
+        attachmentId: 'att-history', mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1,
+      },
+    }
+    agent.session.append('user/message', {
+      id: 'image-message', role: 'user', source: { kind: 'user' }, content: [image],
+    } as never, { surfaceOp: 'append' })
+
+    const catalog = expectValue(await api.sessions.models(request({ sessionId })))
+    expect(catalog.groups.find(group => group.id === 'qwen')?.models).toEqual([{
+      id: 'qwen-vl',
+      name: 'Qwen VL',
+      inputModalities: ['text', 'image'],
+    }])
+    expect(expectValue(await api.sessions.selectModel(request({
+      sessionId, provider: 'text-only', model: 'plain',
+    }))).selected).toEqual({ provider: 'text-only', model: 'plain' })
+
+    const prompt = await api.sessions.prompt(request({
+      sessionId,
+      mode: 'queue' as const,
+      content: [{ type: 'image' as const, mediaType: 'image/png' as const, data: 'AQ==' }],
+    }))
+    expect(prompt.result).toMatchObject({ ok: true, value: { accepted: true } })
+    expect((followup.mock.calls[0]?.[0] as UserMessage).content).toEqual([{
+      type: 'image',
+      attachment: {
+        attachmentId: 'att-vision', mediaType: 'image/png', bytes: 1, width: 1, height: 1,
+      },
+    }])
+    await ctx.fiber.dispose()
+  })
+
+  it('reports an invalid configured vision route as an image-admission failure', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    registerTextOnly(ctx)
+    registerVision(ctx, ['text'])
+    await ctx.plugin(ImageAnalysis, {
+      provider: 'qwen',
+      model: 'qwen-vl',
+      maxOutputTokens: 512,
+      timeoutMs: 1_000,
+    })
+    const followup = vi.fn()
+    Object.assign(agent, { followup })
+    const api = createApiProxy(ctx, {
+      defaultModelSelection: () => ({ provider: 'text-only', model: 'plain' }),
+      cwd: '/tmp',
+    })
+
+    const prompt = await api.sessions.prompt(request({
+      sessionId,
+      mode: 'queue' as const,
+      content: [{ type: 'image' as const, mediaType: 'image/png' as const, data: 'AQ==' }],
+    }))
+    expect(prompt.result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'attachment-error',
+        details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
+      },
+    })
+    expect(followup).not.toHaveBeenCalled()
+
+    agent.session.append('user/message', {
+      id: 'image-message', role: 'user', source: { kind: 'user' },
+      content: [{
+        type: 'image',
+        attachment: {
+          attachmentId: 'att-history', mediaType: 'image/png', bytes: 1, width: 1, height: 1,
+        },
+      }],
+    } as never, { surfaceOp: 'append' })
+    const selection = await api.sessions.selectModel(request({
+      sessionId, provider: 'text-only', model: 'plain',
+    }))
+    expect(selection.result).toMatchObject({ ok: false, error: { code: 'model-unavailable' } })
+    if (!selection.result.ok) {
+      expect(selection.result.error.message).toContain('does not explicitly accept image input')
+    }
     await ctx.fiber.dispose()
   })
 

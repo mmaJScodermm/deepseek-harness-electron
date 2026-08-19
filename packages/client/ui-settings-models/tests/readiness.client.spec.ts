@@ -48,6 +48,8 @@ function state(overrides: Partial<ModelsSettingsState> = {}): ModelsSettingsStat
     credentialError: null,
     writable: true,
     rows: [row()],
+    modelGroups: [],
+    modelFailures: [],
     namespaces: new Map(),
     ...overrides,
   }

@@ -111,8 +111,16 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'LLM adapter registry',
     mode: 'seam',
     implementations: ['llm-deepseek', 'llm-pi-ai', 'llm-replay'],
-    consumers: ['agent-loop', 'compaction-basic'],
+    consumers: ['agent-loop', 'compaction-basic', 'llm-image-analysis'],
     note: 'Adapters register provider implementations; the loop and compaction call the provider-neutral stream service.',
+  },
+  {
+    key: 'imageAnalysis',
+    pkg: 'llm-image-analysis',
+    title: 'Optional image-to-text preprocessing',
+    mode: 'core',
+    consumers: ['apiproxy'],
+    note: 'Uses a separately configured image-capable LLM route to append durable text replacements before the conversation model request; the host queries its effective route for image admission.',
   },
   {
     key: 'tokenMeter',
@@ -176,7 +184,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'User-settings seam',
     mode: 'seam',
     implementations: ['settings-file'],
-    consumers: ['llm-deepseek', 'llm-pi-ai', 'apiproxy'],
+    consumers: ['llm-deepseek', 'llm-pi-ai', 'llm-image-analysis', 'apiproxy'],
     note: 'Plugins register namespace schemas and resolve layered values; providers store the raw document. The LLM adapters register their entry config as the composition base under the user section; the web gateway serves redacted layered descriptors and writes the user layer.',
   },
   {

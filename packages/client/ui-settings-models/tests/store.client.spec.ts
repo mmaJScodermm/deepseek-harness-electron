@@ -41,6 +41,7 @@ const NAMESPACES = [
 
 function api(overrides: {
   providers?: () => Promise<RpcResponse<{ providers: typeof DIRECTORY }>>
+  models?: () => Promise<RpcResponse<{ groups: { id: string; name: string; models: { id: string; name: string; inputModalities?: ('text' | 'image')[] }[] }[]; failures: { id: string; name: string; message: string }[] }>>
   describeSettings?: () => Promise<RpcResponse<{ writable: boolean; namespaces: typeof NAMESPACES }>>
   describeCredentials?: (refs: string[]) => Promise<RpcResponse<{ credentials: Record<string, unknown> }>>
 } = {}) {
@@ -48,7 +49,7 @@ function api(overrides: {
   const face = {
     llm: {
       providers: overrides.providers ?? (() => Promise.resolve(ok({ providers: DIRECTORY }))),
-      models: () => Promise.resolve(ok({ groups: [], failures: [] })),
+      models: overrides.models ?? (() => Promise.resolve(ok({ groups: [], failures: [] }))),
     },
     settings: {
       describe: overrides.describeSettings ?? (() => Promise.resolve(ok({ writable: true, hasDocument: false, namespaces: NAMESPACES }))),
@@ -96,6 +97,29 @@ describe('ModelsSettingsStore', () => {
     expect(byProvider.get('anthropic')?.apiKeyEnv).toBeUndefined()
     expect(byProvider.get('ghost')).toMatchObject({ configured: false, removable: false })
     expect(state.namespaces.get('llm-pi-ai')?.ns).toBe('llm-pi-ai')
+  })
+
+  it('keeps the model directory and provider-local failures in the page snapshot', async () => {
+    const { face } = api({
+      models: () => Promise.resolve(ok({
+        groups: [{
+          id: 'qwen',
+          name: 'Qwen',
+          models: [{ id: 'qwen-vl', name: 'Qwen VL', inputModalities: ['text', 'image'] }],
+        }],
+        failures: [{ id: 'broken', name: 'Broken', message: 'catalog offline' }],
+      })),
+    })
+    const store = new ModelsSettingsStore(face)
+    await store.load()
+    expect(store.store.getSnapshot().modelGroups).toEqual([{
+      id: 'qwen',
+      name: 'Qwen',
+      models: [{ id: 'qwen-vl', name: 'Qwen VL', inputModalities: ['text', 'image'] }],
+    }])
+    expect(store.store.getSnapshot().modelFailures).toEqual([
+      { id: 'broken', name: 'Broken', message: 'catalog offline' },
+    ])
   })
 
   it('degrades the credential badge, not the page, when the credential domain fails', async () => {

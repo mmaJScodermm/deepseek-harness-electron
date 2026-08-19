@@ -8,7 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { LlmCallConfig, LlmFailure, ResolvedRetryPolicy } from '@deepseek-ai/dsh-llm'
-import type { AgentCancelCause, Session, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
+import type { AgentCancelCause, Session, SessionEvent, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
 export type { AgentCancelCause } from '@deepseek-ai/dsh-session'
 import type { Inbox } from './inbox.ts'
 import type { InboxTarget } from './types.ts'
@@ -229,6 +229,20 @@ declare module '@deepseek-ai/cordis' {
      * @mode waterfall
      */
     'agent/pre-step'(this: Scoped<Agent>, payload: { agent: Agent; messages: UserMessage[]; turn: number; step: number; signal: AbortSignal }, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
+    /**
+     * User messages for one entered step are durable and may be replaced on
+     * the model-visible session surface before the conversation request is
+     * derived. Listeners append every model-visible replacement before they
+     * return; rejection closes the step without dispatching the main model.
+     * @param payload.agent - the agent whose step input was logged.
+     * @param payload.events - exact `user/message` events appended for this step, possibly empty.
+     * @param payload.turn - the open turn number.
+     * @param payload.step - the entered step number.
+     * @param payload.signal - the current turn's explicit abort signal.
+     * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+     * @mode serial
+     */
+    'agent/step-input-logged'(this: Scoped<Agent>, payload: { agent: Agent; events: SessionEvent<'user/message'>[]; turn: number; step: number; signal: AbortSignal }): Promise<void> | void
     /**
      * Replace the frozen call configuration. `await next()` yields the config
      * the machine would use (agent options on the first request, the logged
